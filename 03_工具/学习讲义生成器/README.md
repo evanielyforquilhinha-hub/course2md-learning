@@ -9,7 +9,7 @@ Python 3.11+、Node.js（建议 18+），公式排版资源 KaTeX 已随源码�
 软件的默认教学提示词与本次课程提示词均可修改。
 
 将 `settings.example.json` 复制为 `settings.json` 后替换示例路径，或按
-仓库 README 中的 PowerShell 说明生成。`settings.json`、输出和个人
+[开发文档](../../docs/DEVELOPMENT.md)中的 PowerShell 说明生成。`settings.json`、输出和个人
 配置均不提交。不要在示例中填入真实 API Key。
 
 桌面程序通过 `COURSE2MD_STUDY_SCRIPT` 和 `COURSE2MD_STUDY_PYTHON` 定位
