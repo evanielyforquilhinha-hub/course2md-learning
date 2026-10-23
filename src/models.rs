@@ -36,7 +36,13 @@ enum CoremlMode {
     /// Download/repair files only; the later transcription loads the model.
     Cache,
     /// Load the model as the requested preparation step.
-    Prepare { cached: bool },
+    Prepare {
+        #[cfg_attr(
+            not(apple_native),
+            expect(dead_code, reason = "Used only by the native Apple loader")
+        )]
+        cached: bool,
+    },
 }
 
 async fn fetch_model(

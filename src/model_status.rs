@@ -159,6 +159,7 @@ const WHISPER: &[ApplePart] = &[ApplePart {
     ],
     weights: false,
 }];
+#[cfg(apple_native)]
 pub(crate) const APPLE_VAD: ApplePart = ApplePart {
     repo: "aufklarer/Silero-VAD-v6.2.1-CoreML",
     files: &["config.json"],
