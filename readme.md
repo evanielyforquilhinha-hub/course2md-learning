@@ -1,128 +1,110 @@
-# course2md
+# course2md-learning
 
-Turn **YouTube, Bilibili, or local videos** into illustrated Markdown / HTML notes. Add a video in the desktop app, generate notes, then organize and read them in your notes library.
+把课程视频整理为截图、课堂文字和可自定义的 AI 学习讲义。
 
-**English** · [中文](readme.zh.md) · [GitHub Wiki](https://github.com/mizorewww/course2md/wiki)
+这是基于 [mizorewww/course2md](https://github.com/mizorewww/course2md)
+`v2.0.0-rc.11` 的二次开发版本，**不是原作者的官方发行版**。原项目
+作者与贡献者的版权、Git 历史和 [MIT 许可证](LICENSE) 均予保留。
+具体来源、修改范围见 [NOTICE](NOTICE.md)，第三方资源见
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
 
-**Preview 2.0 (RC11):** [release notes](https://github.com/mizorewww/course2md/releases/tag/v2.0.0-rc.11). Install with `brew install --cask mizorewww/tap/course2md-gui@rc`. The instructions below install the stable version.
+## 本版本的主要调整
 
-## Features
+- 转录、文字校对、开头摘要和 AI 学习讲义分别配置。
+- 添加课程时选择本次 AI 服务和模型；教学提示词可以修改，也可保存默认。
+- 转录完成后，按本次设置自动生成结合截图的分步讲义，保留课堂笔记。
+- 讲义显示实际完成进度，已完成结果可直接打开，重新生成是独立操作。
+- 本地 KaTeX 排版公式，支持分式、积分、矩阵、上下标等。
+- 调整原生桌面的布局、服务选择、导航、滚动区域和存储设置。
+- 支持 OpenAI 兼容服务、Ollama，以及程序现有的 Codex 订阅连接方式。
+  实际可用模型、认证方式和额度由所选服务决定，不代表本项目提供免费 AI。
 
-- Slide-style notes: a screenshot whenever the picture changes, with the transcript in paragraphs beneath it, saved as `course.md` and `course.html`.
-- YouTube, Bilibili and local files. Existing subtitles are used when available; otherwise speech is transcribed.
-- Speech recognition on your own computer: Apple Silicon works out of the box, and other systems can use a graphics card, the CPU, or an Intel Core Ultra NPU. A cloud service is optional; audio leaves your computer only if you choose it.
-- Optional AI proofreading and summaries using any OpenAI-compatible service, a local Ollama server, or a ChatGPT subscription. Off by default.
-- The desktop app adds background tasks you can pause, a notes library with folders and search, a reader with outline and find, and 10 themes.
+## 本仓库包含什么
 
-
-## Interface languages
-
-The desktop app and CLI are available in **English, 简体中文, 繁體中文 and 日本語**. The desktop follows the system language by default; change it in **Settings → Appearance → Interface language**. The CLI follows the system locale, and `--lang en|zh-Hans|zh-Hant|ja` (or `COURSE2MD_LANG`) overrides it. Machine-readable `--json` output stays in Simplified Chinese so scripts keep stable message text.
-
-## Install the desktop app (GUI)
-
-The desktop app includes the conversion engine, so you do not need to install the CLI. It does need `ffmpeg`, which the steps below install.
-
-### macOS: Apple Silicon, macOS 15 or later
-
-**If you have Homebrew:** run this in Terminal to install the app and the video tools `ffmpeg` and `yt-dlp`:
-
-```sh
-brew install --cask mizorewww/tap/course2md-gui
-```
-
-After installation, open **course2md** from **Finder → Applications**.
-
-**Without Homebrew:** [download the DMG](https://github.com/mizorewww/course2md/releases/latest/download/course2md-gui-macos-arm64.dmg), open it, and drag **course2md** to Applications. You also need `ffmpeg`; see the [macOS guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#macos-apple-silicon).
-
-### Arch Linux / CachyOS: x86_64
-
-If you have `yay`, run this to install the desktop app, video tools and required graphics libraries:
-
-```sh
-yay -S course2md-gui-bin
-```
-
-With `paru`, run `paru -S course2md-gui-bin`. Open **course2md** from your applications menu. Your graphics hardware needs a working Vulkan driver; see the [Linux installation guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#arch-linux--cachyos).
-
-### Windows: x64
-
-1. [Download the Windows portable package (ZIP)](https://github.com/mizorewww/course2md/releases/latest/download/course2md-desktop-windows-AMD64.zip) and **extract everything** to a permanent folder.
-2. Install `ffmpeg` in PowerShell:
-
-   ```powershell
-   winget install --id Gyan.FFmpeg -e
-   ```
-
-3. Open **course2md-desktop.exe** from the extracted folder. Keep the other files next to it.
-
-### Ubuntu / other Linux distributions: x86_64
-
-[Download the Linux package (tar.gz)](https://github.com/mizorewww/course2md/releases/latest/download/course2md-desktop-linux-x86_64.tar.gz), install `ffmpeg` and the graphics libraries from the [Linux guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#other-linux-x64-distributions), extract it, and run `./course2md-desktop`. Built on Ubuntu 24.04.
-
-Intel Macs and Linux ARM64 have no desktop app yet; use the [CLI](https://github.com/mizorewww/course2md/wiki/CLI-Guide).
-
-## First use
-
-1. Open **course2md** and follow the setup steps to choose a notes folder and how speech is recognized.
-2. Open **Settings → App** and check **Runtime checks** to confirm the video tools are detected.
-3. Add a video URL or local file, review the preview, and click **Start conversion**. Open the finished notes from **Notes library**.
-
-The first local transcription downloads a speech model (1–2.4 GB). See the [first-launch guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#first-launch).
-
-## Install the CLI
-
-The CLI and the desktop app share one configuration file and can be installed side by side.
-
-**macOS / Linux (prebuilt binary):**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/mizorewww/course2md/main/install.sh | bash
-```
-
-This installs `course2md` into `~/bin` (change with `COURSE2MD_BIN_DIR`). Alternatives: `brew install mizorewww/tap/course2md`, `yay -S course2md-bin`, or `cargo install --path .` from source.
-
-Requires `ffmpeg`. Online links also need `yt-dlp` (installed automatically if missing). Local recognition on non-Apple systems needs `llama-server`. Run `course2md doctor` to check.
-
-## Quick start
-
-```sh
-course2md ./lecture.mp4                        # local file
-course2md https://www.youtube.com/watch?v=…    # or a Bilibili link
-course2md ./lecture.mp4 -o ./notes             # choose the output root
-```
-
-The first run asks a few setup questions. Notes are saved under the output folder as `platform/title/ID/`.
-
-## Common commands
-
-| Command | Purpose |
+| 目录 | 内容 |
 | --- | --- |
-| `course2md <URL or file>` | Convert a video into notes |
-| `course2md --login bilibili` / `--logout bilibili` | Scan a QR code to log in to Bilibili / remove the saved login |
-| `course2md --login ollama` / `--login codex` | Use a local Ollama server / import the Codex CLI's ChatGPT login (browser authorization offered when absent) |
-| `course2md doctor` | Check tools, speech backends and settings |
-| `course2md config init` / `config show` | Create a configuration template / show the config path and settings |
-| `course2md models list` / `models prepare` | Check downloaded models / pre-download a model |
-| `course2md llm setup` / `llm status` / `llm disable` | Configure, inspect or turn off AI proofreading |
-| `course2md summarize ./notes` | Add AI summaries to existing notes |
+| `src` / `tests` | Rust 转换引擎及测试 |
+| `desktop` | 原生 GPUI 桌面程序、资源、依赖补丁与构建脚本 |
+| `03_工具/学习讲义生成器` | Python 讲义工具、通用教学模板、数学排版和离线测试 |
+| `03_工具/项目管理` | 讲义工具需要的存储配置辅助代码 |
+| `tools/windows/PortableLauncher.cs` | Windows 便携目录初始化与启动器源码 |
 
-Use `<command> --help` for each command's options.
+不包含课程、PPT、笔记、私人提示词、API Key、账号凭据、模型权重、缓存
+或预编译程序。`prompt43.txt` 是兼容旧接口的文件名，仓库内内容是通用
+模板；每位使用者可以自行设置教学提示词。
 
-## Configuration
+本次仅提交源码，没有发布二次开发版安装包。原项目发行说明单独保留在
+[README.upstream.md](README.upstream.md)，其中下载链接属于上游版本。
 
-Settings live in `~/.config/course2md/config.toml` (`%APPDATA%\course2md\config.toml` on Windows) and are shared with the desktop app. Command-line options override them. `course2md remove` clears saved AI service settings.
+## 构建
 
-## Frequently asked questions
+需要 Rust stable、Git、Python 3.11+。Windows 需要 C++ Build Tools 和
+LLVM；其他平台的系统依赖及详细步骤见 [desktop/README.md](desktop/README.md)
+与 `.github/actions/desktop-deps/action.yml`。讲义公式排版需要 PATH 中的
+Node.js；视频处理另外安装 FFmpeg，在线链接另外安装 yt-dlp。
 
-**Conversion fails with a missing `ffmpeg`.** Install `ffmpeg` (it includes `ffprobe`) and `yt-dlp` for online links — for example `brew install ffmpeg yt-dlp` on macOS — then run `course2md doctor` to confirm.
+```powershell
+python desktop/scripts/sources.py --locked
+cargo build
+cargo build --manifest-path desktop/Cargo.toml
+```
 
-**A Bilibili video fails or comes back in low quality.** Run `course2md --login bilibili` and scan the QR code; `--logout bilibili` removes the saved login.
+GPUI 依赖由准备脚本按固定提交获取到 `desktop/.deps`，不把整份依赖
+检出目录、工具链或第三方可执行文件上传到本仓库。
 
-**How large are the model downloads?** About 1–2.3 GB on Apple Silicon (stored in `~/Library/Caches/qwen3-speech/`) and 2.4 GB elsewhere (`~/.cache/course2md/models/`). Download ahead of time with `course2md models prepare`.
+### Windows 开发运行示例
 
-## Documentation and help
+在仓库根目录运行以下 PowerShell。示例使用 `.local` 隔离运行数据，
+不会从其他用户的课程库或账号配置导入内容。
 
-[All documentation (GitHub Wiki)](https://github.com/mizorewww/course2md/wiki) · [CLI installation and usage](https://github.com/mizorewww/course2md/wiki/CLI-Guide) · [Upgrade and uninstall](https://github.com/mizorewww/course2md/wiki/GUI-Installation#upgrade-and-uninstall) · [Troubleshooting](https://github.com/mizorewww/course2md/wiki/Troubleshooting) · [Report a problem](https://github.com/mizorewww/course2md/issues)
+```powershell
+$repo = (Get-Location).Path
+$configDir = Join-Path $repo '.local/config/course2md'
+$courseDir = Join-Path $repo '.local/courses'
+$studyDir = Join-Path $repo '.local/study'
+New-Item -ItemType Directory -Force $configDir,$courseDir,$studyDir | Out-Null
+$configFile = Join-Path $configDir 'config.toml'
+if (!(Test-Path -LiteralPath $configFile)) {
+    '[defaults]' + "`n" + 'out = ' + (ConvertTo-Json $courseDir -Compress) |
+        Set-Content -LiteralPath $configFile -Encoding utf8
+}
+@{
+    config_path = $configFile
+    course_root = $courseDir
+    outputs_root = $studyDir
+    model = ''
+} | ConvertTo-Json | Set-Content -LiteralPath '.\03_工具\学习讲义生成器\settings.json' -Encoding utf8
+$env:XDG_CONFIG_HOME = Join-Path $repo '.local/config'
+$env:XDG_CACHE_HOME = Join-Path $repo '.local/cache'
+$env:COURSE2MD_BIN = Join-Path $repo 'target/debug/course2md.exe'
+$env:COURSE2MD_STUDY_SCRIPT = Join-Path $repo '03_工具/学习讲义生成器/study.py'
+$env:COURSE2MD_STUDY_PYTHON = (Get-Command python).Source
+& '.\desktop\target\debug\course2md-desktop.exe'
+```
 
-For developers: [contributing](AGENTS.md) · [desktop development](desktop/README.md) · [engine architecture](docs/DESIGN.md) · [benchmarks](docs/BENCHMARKS.md) · [releases](docs/PACKAGING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+自定义了 `CARGO_TARGET_DIR` 时，需要按实际构建目录修改两处可执行文件
+路径。AI 服务在软件中配置，不能把真实密钥写入示例或 Git 提交。
+
+`PortableLauncher.cs` 服务于便携包的相对目录布局，不能直接替代上面的
+开发启动步骤。发布含第三方运行时的便携包前，需另行完成依赖分发审查。
+
+## 检查与测试
+
+```powershell
+cargo test --lib
+cargo test --test cli_ux --test login_cli --test task_execution
+cargo test --manifest-path desktop/Cargo.toml
+python -X utf8 -B -m unittest discover -s '.\03_工具\学习讲义生成器' -p 'test_*.py'
+```
+
+讲义工具测试使用合成图文和模拟模型，不发送付费 AI 请求。跨平台的
+完整检查以仓库 CI 和上游构建说明为准；未逐一验证所有系统的安装流程。
+
+## 使用与再发布
+
+请保留 LICENSE、NOTICE 和第三方资源的原始授权文件，清楚注明上游
+来源与本版本修改。课程资源不因程序开源而获得转载授权。
+
+FFmpeg、模型权重和其他运行时各有许可；公开分发包含这些组件的二进制
+包，需要按所用版本另行满足相应条件。本源码仓库的 MIT 许可不会覆盖
+它们的许可，也不代表获得原作者、模型厂商或其他品牌的背书。
