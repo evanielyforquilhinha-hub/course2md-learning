@@ -1,1 +1,3 @@
 *.patch text eol=lf
+# Preserve upstream-generated KaTeX resources; do not rewrite their whitespace.
+03_工具/学习讲义生成器/vendor/** -whitespace
