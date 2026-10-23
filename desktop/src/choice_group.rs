@@ -184,7 +184,7 @@ fn item_style<T: Styled + StatefulInteractiveElement + gpui::prelude::FluentBuil
         .min_h(height)
         .px(rems(12. / 14.))
         .py_0()
-        .rounded_full()
+        .rounded(super::RADIUS_NAV)
         .border_2()
         .border_color(gpui::transparent_black())
         .bg(gpui::transparent_black())
@@ -241,8 +241,8 @@ impl RenderOnce for SingleChoiceGroup {
         let count = self.options.len();
         let scale = f32::from(window.rem_size()) / 14.;
         let segmented = self.segmented;
-        let inset = if segmented { 0. } else { 2. * scale };
-        let item_height = px(if segmented { 40. * scale } else { 36. * scale });
+        let inset = 2. * scale;
+        let item_height = px(36. * scale);
         let position = crate::motion::selection_value(
             ElementId::NamedChild(self.id.clone().into(), "selection-position".into()),
             selected.unwrap_or(0) as f32,
@@ -292,7 +292,7 @@ impl RenderOnce for SingleChoiceGroup {
             .w_full()
             .min_w_0()
             .items_stretch()
-            .when(segmented, |lane| lane.rounded_full().overflow_hidden())
+            .rounded(super::RADIUS_NAV)
             .when(cfg!(test), |lane| {
                 lane.debug_selector(|| "full-choice-lane".into())
             });
@@ -300,21 +300,9 @@ impl RenderOnce for SingleChoiceGroup {
             lane = lane.child(
                 div()
                     .absolute()
-                    .when(!segmented, |fill| fill.rounded_full())
-                    // GPUI overflow clips the rectangle, not rounded corners. Paint
-                    // the indicator's end caps explicitly; use the animated position
-                    // so leaving/entering an end segment never flashes a square cap.
-                    .when(segmented, |fill| {
-                        let radius = f32::from(item_height) / 2.;
-                        let left = (1. - position).clamp(0., 1.);
-                        let right =
-                            (1. - (count.saturating_sub(1) as f32 - position)).clamp(0., 1.);
-                        fill.rounded_l(px(radius * left))
-                            .rounded_r(px(radius * right))
-                    })
-                    // M3 segmented buttons and navigation share the tonal
-                    // secondary container as the selected surface.
-                    .bg(super::color(super::SECONDARY_CONTAINER))
+                    .rounded(super::RADIUS_NAV)
+                    .bg(super::color(super::SURFACE))
+                    .shadow(super::shadow_card())
                     .top_0()
                     .bottom_0()
                     .left(relative(position / count as f32))
@@ -323,19 +311,6 @@ impl RenderOnce for SingleChoiceGroup {
                         fill.debug_selector(|| "full-choice-indicator".into())
                     }),
             );
-        }
-        if segmented && count > 1 {
-            for index in 1..count {
-                lane = lane.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left(relative(index as f32 / count as f32))
-                        .w(px(1.))
-                        .bg(super::color(super::CONTROL)),
-                );
-            }
         }
         for (index, option) in self.options.into_iter().enumerate() {
             let checked = selected == Some(index);
@@ -391,10 +366,7 @@ impl RenderOnce for SingleChoiceGroup {
                 let tab = item_style(gpui_base::Tab::new(value.clone()), item_height)
                     .when_some(self.label_text_size, |item, size| item.text_size(size))
                     .when(segmented, |item| {
-                        item.px(rems(8. / 14.))
-                            .rounded_none()
-                            .when(index == 0, |item| item.rounded_l_full())
-                            .when(index + 1 == count, |item| item.rounded_r_full())
+                        item.px(rems(8. / 14.)).rounded(super::RADIUS_NAV)
                     })
                     .selected(checked)
                     .disabled(disabled)
@@ -414,10 +386,7 @@ impl RenderOnce for SingleChoiceGroup {
                 let radio = item_style(gpui_base::Radio::new(value.clone()), item_height)
                     .when_some(self.label_text_size, |item, size| item.text_size(size))
                     .when(segmented, |item| {
-                        item.px(rems(8. / 14.))
-                            .rounded_none()
-                            .when(index == 0, |item| item.rounded_l_full())
-                            .when(index + 1 == count, |item| item.rounded_r_full())
+                        item.px(rems(8. / 14.)).rounded(super::RADIUS_NAV)
                     })
                     .checked(checked)
                     .disabled(disabled)
@@ -452,13 +421,10 @@ impl RenderOnce for SingleChoiceGroup {
             .min_w_0()
             .max_w_full()
             .p(px(inset))
-            .rounded_full()
+            .rounded(super::RADIUS_CONTROL)
+            .bg(super::color(super::INSET))
             .border_1()
-            .border_color(super::color(if segmented {
-                super::CONTROL
-            } else {
-                super::HAIRLINE
-            }))
+            .border_color(super::color(super::CARD_LINE))
             .map(|group| match content_width {
                 Some(width) => group.w(px(width)),
                 None => group.w_full(),

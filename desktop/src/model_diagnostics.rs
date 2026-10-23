@@ -578,13 +578,14 @@ impl Desktop {
             view = view.child(extra);
         }
         view.child(
-            h_flex()
+            // These are complete groups, not auto-width siblings competing for
+            // intrinsic space. In particular, a full-width metadata value must
+            // never be measured beside the preparation buttons in an auto row.
+            v_flex()
                 .w_full()
                 .min_w_0()
                 .gap_2()
-                .items_center()
-                .flex_wrap()
-                .child(actions.w_auto())
+                .child(actions.w_full())
                 .children(cache_action),
         )
         .when_some(cache_details, |view, details| view.child(details))
@@ -775,8 +776,9 @@ impl Desktop {
             }
             cache_action = Some(
                 h_flex()
-                    .w_auto()
+                    .w_full()
                     .min_w_0()
+                    .items_center()
                     .gap_3()
                     .flex_wrap()
                     .child(
@@ -810,6 +812,9 @@ impl Desktop {
                                 SharedString::from(format!("model-cached-size-{key}")),
                                 course2md::tr!("占用空间 {}", crate::activity::bytes(status.bytes)),
                             )
+                            .w_auto()
+                            .max_w_full()
+                            .flex_shrink_0()
                             .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
                         )

@@ -17,7 +17,7 @@ impl std::error::Error for TitleRequired {}
 use crate::import_ui::cover_slot;
 use crate::{
     notes::default_output,
-    preferences::ServiceRefs,
+    preferences::{ServicePurpose, ServiceRefs},
     theme::*,
     workspace::{Intent, TaskPlan, TaskRecord, TaskState},
 };
@@ -25,11 +25,36 @@ use anyhow::{Context as _, Result, ensure};
 use course2md::config::TranscriptSource;
 use course2md::execution::Component;
 use gpui_component::button::*;
+use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Request purpose of a remote speech recognition call.
 const TRANSCRIPTION_PURPOSE: &str = "transcription";
+
+fn validate_study_selection(study: &workspace::StudyPlan) -> Result<()> {
+    if !study.enabled {
+        return Ok(());
+    }
+    ensure!(
+        !study.prompt.trim().is_empty() && study.prompt.len() <= 131_072,
+        course2md::tr!("教学提示词不能为空，也不能超过 128 KiB。")
+    );
+    ensure!(
+        study
+            .service
+            .as_ref()
+            .is_some_and(|id| !id.trim().is_empty()),
+        course2md::tr!("请选择本次 AI 服务，或改用导出到 ChatGPT。")
+    );
+    ensure!(
+        study.model.as_ref().is_some_and(|model| {
+            !model.trim().is_empty() && model.len() <= 256 && !model.chars().any(char::is_control)
+        }),
+        course2md::tr!("请填写本次模型 ID，或从服务返回的模型中选择。")
+    );
+    Ok(())
+}
 
 /// One row of the virtualized task queue. Task rows carry their index into
 /// the sorted task snapshot captured for the frame.
@@ -929,6 +954,24 @@ impl Desktop {
         let options = self.task_options.clone();
         let folder = self.target_folder;
         let scroll = f32::from(self.scrolls[Page::New as usize].offset().y);
+        let study_editor = (!self.study_import.loading).then(|| {
+            (
+                self.study_import.draft_id.clone(),
+                self.study_import.prompt.read(cx).value().to_string(),
+                self.study_import.model.read(cx).value().to_string(),
+            )
+        });
+        let proofread_editor = (!self.proofread_import.loading).then(|| {
+            (
+                self.proofread_import.binding.clone(),
+                self.proofread_import
+                    .model
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .to_owned(),
+            )
+        });
         let Some(workspace) = &mut self.workspace else {
             return false;
         };
@@ -937,9 +980,37 @@ impl Desktop {
             return false;
         };
         self.draft_deadline = None;
-        if !update_input_form(&mut next, input, title, source, options, folder, scroll) {
+        let previous = next.clone();
+        update_input_form(&mut next, input, title, source, options, folder, scroll);
+        if let Some((Some((draft_id, service_id)), model)) = proofread_editor
+            && draft_id == next.id
+            && next
+                .ai_service
+                .as_deref()
+                .or(self.preferences.default_refs().llm.as_deref())
+                == Some(service_id.as_str())
+        {
+            let saved_model = self
+                .preferences
+                .version(&service_id)
+                .map(|v| v.config.model.as_str());
+            if next.ai_model.is_some() || saved_model != Some(model.as_str()) {
+                next.ai_service = Some(service_id);
+                next.ai_model = Some(model);
+            }
+        }
+        if let Some((draft_id, prompt, model)) = study_editor
+            && draft_id.as_deref() == Some(next.id.as_str())
+        {
+            next.study.prompt = prompt;
+            if next.study.model.is_some() || !model.is_empty() {
+                next.study.model = Some(model);
+            }
+        }
+        if next == previous {
             return true;
         }
+        next.updated = workspace::now();
         let result = workspace.transaction(|state| {
             *state
                 .draft_mut()
@@ -953,6 +1024,7 @@ impl Desktop {
             return false;
         }
         self.workspace_error = None;
+        self.study_import.error = None;
         true
     }
 
@@ -995,6 +1067,7 @@ impl Desktop {
         self.inputs[&Field::Title].update(cx, |s, cx| s.set_value(draft.title, window, cx));
         self.scrolls[Page::New as usize].set_offset(point(px(0.), px(draft.scroll)));
         self.draft_loading = false;
+        self.sync_study_editor(window, cx);
         self.draft_deadline = None;
         cx.notify();
     }
@@ -1104,7 +1177,36 @@ impl Desktop {
         ServiceRefs {
             asr: draft.asr_service.clone().or(defaults.asr),
             llm: draft.ai_service.clone().or(defaults.llm),
+            llm_model: draft.ai_model.clone(),
         }
+    }
+
+    fn validate_study_plan(
+        &self,
+        study: &workspace::StudyPlan,
+        validation: PlanValidation,
+    ) -> Result<()> {
+        validate_study_selection(study)?;
+        if !study.enabled {
+            return Ok(());
+        }
+        if validation == PlanValidation::Submission {
+            let version = self
+                .preferences
+                .check_dispatch(study.service.as_deref().unwrap())?;
+            ensure!(
+                version.config.protocol.purpose() == ServicePurpose::Ai,
+                course2md::tr!("请选择本次 AI 服务，或改用导出到 ChatGPT。")
+            );
+            if version.config.authentication == crate::preferences::Authentication::ApiKey {
+                ensure!(
+                    version.config.credential.is_some(),
+                    course2md::tr!("请先为此服务保存 API Key。")
+                );
+            }
+            crate::study_ui::study_tool_ready()?;
+        }
+        Ok(())
     }
 
     fn build_plan(&self, validation: PlanValidation) -> Result<TaskPlan> {
@@ -1114,6 +1216,7 @@ impl Desktop {
             course2md::tr!("默认设置已保存，当前视频的选项尚未同步。请重试。")
         );
         let (workspace, draft) = self.plan_draft()?;
+        self.validate_study_plan(&draft.study, validation)?;
         ensure!(
             !draft.input.is_empty(),
             if draft.online {
@@ -1214,6 +1317,7 @@ impl Desktop {
             config,
             asr_service: refs.asr,
             ai_service: refs.llm,
+            study: draft.study.clone(),
         })
     }
 
@@ -1231,6 +1335,7 @@ impl Desktop {
             course2md::tr!("默认设置已保存，当前选项尚未同步。请重试。")
         );
         let (workspace, draft) = self.plan_draft()?;
+        self.validate_study_plan(&draft.study, PlanValidation::Submission)?;
         let identity = course2md::fetch::candidate_identity(candidate)
             .context(course2md::tr!("还无法确认这个视频的身份，请单独打开后转换"))?;
         let environment = self.ensure_plan_environment(true)?;
@@ -1285,6 +1390,7 @@ impl Desktop {
             config,
             asr_service: refs.asr,
             ai_service: refs.llm,
+            study: draft.study.clone(),
         })
     }
 
@@ -1506,6 +1612,7 @@ impl Desktop {
         let refs = ServiceRefs {
             asr: task.plan.asr_service.clone(),
             llm: task.plan.ai_service.clone(),
+            llm_model: Some(task.plan.config.llm.model.clone()),
         };
         let config = self
             .preferences
@@ -1627,6 +1734,7 @@ impl Desktop {
         let refs = ServiceRefs {
             asr: task.plan.asr_service.clone(),
             llm: task.plan.ai_service.clone(),
+            llm_model: Some(task.plan.config.llm.model.clone()),
         };
         let needed = match self
             .preferences
@@ -2099,6 +2207,7 @@ impl Desktop {
                 &ServiceRefs {
                     asr: None,
                     llm: Some(ai_service.clone()),
+                    llm_model: None,
                 },
             )?;
             self.workspace
@@ -2365,6 +2474,10 @@ impl Desktop {
                     let source = task.plan.source.clone();
                     let folder = task.plan.folder;
                     let out_dir = done.out_dir.clone();
+                    let study_task_id = task.id.clone();
+                    let start_study = task.plan.study.enabled
+                        && matches!(task.study, workspace::StudyProgress::Pending)
+                        && matches!(task.state, TaskState::Complete | TaskState::Partial);
                     let storage_dir = Course::from_completed(&done).storage_dir();
                     let frames = manifest
                         .as_ref()
@@ -2416,7 +2529,14 @@ impl Desktop {
                                 );
                             }
                             this.refresh_library(cx);
-                            if open {
+                            if start_study {
+                                this.start_automatic_study(
+                                    study_task_id,
+                                    Course::from_completed(&done),
+                                    open,
+                                    cx,
+                                );
+                            } else if open {
                                 this.open_completed_conversion(Course::from_completed(&done), cx);
                             }
                             cx.notify();
@@ -2531,7 +2651,23 @@ impl Desktop {
             self.queue_rem = rem;
         }
         // Group headings carry the counts; the page heading stays a heading.
-        let header = (!tasks.is_empty()).then(|| self.queue_page_header());
+        if tasks.is_empty() {
+            let content = self.queue_item(&items[0], 0, &tasks, true, None, cx);
+            return v_flex()
+                .w_full()
+                .h_full()
+                .min_h_0()
+                .pt(px(24.))
+                .gap_4()
+                .child(self.queue_page_header().flex_shrink_0())
+                .child(theme::viewport_state(
+                    "task-standalone-scroll",
+                    &self.scrolls[Page::Task as usize],
+                    content,
+                ))
+                .into_any_element();
+        }
+        let header = Some(self.queue_page_header());
         let focus: Rc<Vec<FocusHandle>> = Rc::new(self.queue_focus.clone());
         let state = self.queue_list.clone();
         let items = Rc::new(items);
@@ -2589,20 +2725,21 @@ impl Desktop {
         let content = match item {
             QueueItem::Unavailable => v_flex()
                 .gap_3()
+                .items_center()
+                .text_center()
                 .child(icons::warning().size_8().text_color(color(WARNING)))
                 .child(course2md::tr!("任务记录暂时无法读取"))
                 .child(
                     outline_pill("task-records-open-library")
                         .icon(icons::book_open())
                         .label(course2md::tr!("前往笔记库"))
-                        .self_start()
                         .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Library, cx))),
                 )
                 .into_any_element(),
             QueueItem::Empty => v_flex()
                 .gap_3()
-                .py_12()
                 .items_center()
+                .text_center()
                 .child(icons::task().size_8().text_color(color(GRAY)))
                 .child(
                     accessible_text("task-empty-title", course2md::tr!("还没有生成任务"))
@@ -2613,9 +2750,10 @@ impl Desktop {
                 .child(
                     primary_pill("task-new")
                         .icon(icons::plus())
-                        .label(course2md::tr!("导入视频"))
+                        .label(course2md::tr!("添加课程"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             if this.prepare_workbench_input(window, cx) {
+                                this.generation_options_open = true;
                                 this.navigate(Page::New, cx);
                             }
                         })),
@@ -2838,14 +2976,35 @@ impl Desktop {
         let has_exports = self
             .task_library(task)
             .is_some_and(|location| !workspace::task_export_files(task, location).is_empty());
+        if let workspace::StudyProgress::Complete { output } = &task.study {
+            let output = output.clone();
+            row = row.child(
+                tonal_pill(SharedString::from(format!("task-study-direct-{id}")), cx)
+                    .icon(icons::book_open())
+                    .label(course2md::tr!("打开学习讲义"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_study_document(output.clone(), cx)
+                    })),
+            );
+        }
         if let Some(path) = &task.artifact {
             let path = path.clone();
             let title = task.plan.title.clone();
+            let study_ready = matches!(task.study, workspace::StudyProgress::Complete { .. });
+            let read_button = if study_ready {
+                control(SharedString::from(format!("task-read-direct-{id}")))
+            } else {
+                tonal_pill(SharedString::from(format!("task-read-direct-{id}")), cx)
+            };
             row = row.child(
                 // One filled action per screen: rows open their note tonally.
-                tonal_pill(SharedString::from(format!("task-read-direct-{id}")), cx)
+                read_button
                     .icon(icons::book_open())
-                    .label(course2md::tr!("阅读笔记"))
+                    .label(if study_ready {
+                        course2md::tr!("阅读原稿")
+                    } else {
+                        course2md::tr!("阅读笔记")
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_course(
                             Course::from_completed(&Completed {
@@ -2858,7 +3017,44 @@ impl Desktop {
                     })),
             );
         }
-        if has_exports {
+        let study_output = match &task.study {
+            workspace::StudyProgress::Complete { output } => Some(output.clone()),
+            _ => None,
+        };
+        if study_output.is_some() {
+            let weak = cx.entity().downgrade();
+            let task_id = id.clone();
+            row = row.child(
+                quiet(SharedString::from(format!("task-result-more-{id}")))
+                    .icon(icons::ellipsis())
+                    .accessibility_label(course2md::tr!("更多"))
+                    .tooltip(course2md::tr!("更多"))
+                    .dropdown_menu(move |menu, _, _| {
+                        let mut menu = menu;
+                        if let Some(output) = study_output.clone() {
+                            menu = menu.item(
+                                PopupMenuItem::new(course2md::tr!("查看讲义文件"))
+                                    .icon(icons::folder_open())
+                                    .on_click(move |_, _, cx| cx.reveal_path(&output)),
+                            );
+                        }
+                        if has_exports {
+                            let weak = weak.clone();
+                            let task_id = task_id.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(course2md::tr!("打开导出位置"))
+                                    .icon(icons::folder_open())
+                                    .on_click(move |_, _, cx| {
+                                        let _ = weak.update(cx, |this, cx| {
+                                            this.open_task_export_location(task_id.clone(), cx)
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    }),
+            );
+        } else if has_exports {
             let task_id = id.clone();
             row = row.child(
                 control(SharedString::from(format!("task-open-exports-{id}")))
@@ -2876,8 +3072,9 @@ impl Desktop {
             .w_full()
             .bg(color(SURFACE))
             .border_1()
-            .border_color(color(if is_selected { ACCENT } else { HAIRLINE }))
+            .border_color(color(CARD_LINE))
             .rounded(RADIUS_CARD)
+            .shadow(shadow_card())
             .child(row);
         if is_selected {
             let mut details = v_flex()
@@ -2932,6 +3129,56 @@ impl Desktop {
             if let Some(block) = self.uncertain_block(task, cx) {
                 details = details.child(block);
             }
+            match &task.study {
+                workspace::StudyProgress::Running | workspace::StudyProgress::Pending => {
+                    details =
+                        details.child(div().text_size(TEXT_BODY).text_color(color(GRAY)).child(
+                            crate::study_progress::View {
+                                id: format!("task-study-progress-{id}").into(),
+                                meter: task.study_meter.clone(),
+                                active: true,
+                            },
+                        ));
+                }
+                workspace::StudyProgress::Failed { error } => {
+                    details = details.child(
+                        div()
+                            .whitespace_normal()
+                            .text_color(color(DANGER))
+                            .child(error.clone()),
+                    );
+                    details = details.child(
+                        div()
+                            .text_size(TEXT_BODY)
+                            .text_color(color(GRAY))
+                            .child(course2md::tr!("重试会再次调用所选 AI 服务，可能消耗额度。")),
+                    );
+                }
+                workspace::StudyProgress::Uncertain { error } => {
+                    details = details
+                        .child(
+                            div()
+                                .whitespace_normal()
+                                .text_color(color(DANGER))
+                                .child(error.clone()),
+                        )
+                        .child(div().text_size(TEXT_BODY).text_color(color(GRAY)).child(
+                            course2md::tr!("上次 AI 请求结果未确认；重试可能再次消耗服务额度。"),
+                        ));
+                }
+                _ => {}
+            }
+            if !matches!(
+                task.study,
+                workspace::StudyProgress::Running | workspace::StudyProgress::Pending
+            ) && task.study_meter.is_some()
+            {
+                details = details.child(crate::study_progress::View {
+                    id: format!("task-study-retained-{id}").into(),
+                    meter: task.study_meter.clone(),
+                    active: false,
+                });
+            }
             let style = RecoveryStyle::Card;
             let mut actions = h_flex()
                 .gap_2()
@@ -2948,6 +3195,23 @@ impl Desktop {
                         .icon(icons::arrow_forward())
                         .label(course2md::tr!("查看后续处理任务"))
                         .on_click(cx.listener(move |this, _, _, cx| this.select_task(&next, cx))),
+                );
+            }
+            if task.artifact.is_some()
+                && matches!(
+                    task.study,
+                    workspace::StudyProgress::Failed { .. }
+                        | workspace::StudyProgress::Uncertain { .. }
+                )
+            {
+                let retry_id = id.clone();
+                actions = actions.child(
+                    control(SharedString::from(format!("retry-study-{id}")))
+                        .icon(icons::refresh())
+                        .label(course2md::tr!("重试生成讲义"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.retry_automatic_study(&retry_id, cx)
+                        })),
                 );
             }
             actions = self.task_stop_actions(
@@ -3564,9 +3828,118 @@ impl Desktop {
             ))
     }
 
+    fn box_study_result(&self, task: &TaskRecord, cx: &mut Context<Self>) -> Div {
+        let id = task.id.clone();
+        let mut card = v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_4()
+            .child(self.task_heading(task));
+        match &task.study {
+            workspace::StudyProgress::Pending | workspace::StudyProgress::Running => {
+                card = card.child(h_flex().gap_2().items_center().w_full().child(
+                    crate::study_progress::View {
+                        id: format!("box-study-progress-{id}").into(),
+                        meter: task.study_meter.clone(),
+                        active: true,
+                    },
+                ));
+            }
+            workspace::StudyProgress::Failed { error }
+            | workspace::StudyProgress::Uncertain { error } => {
+                card = card.child(
+                    div()
+                        .whitespace_normal()
+                        .text_color(color(DANGER))
+                        .child(error.clone()),
+                );
+                card = card.child(
+                    div()
+                        .text_size(TEXT_BODY)
+                        .text_color(color(GRAY))
+                        .child(course2md::tr!("重试会再次调用所选 AI 服务，可能消耗额度。")),
+                );
+                if matches!(task.study, workspace::StudyProgress::Uncertain { .. }) {
+                    card = card.child(div().text_size(TEXT_BODY).text_color(color(GRAY)).child(
+                        course2md::tr!("上次 AI 请求结果未确认；重试可能再次消耗服务额度。"),
+                    ));
+                }
+            }
+            _ => {}
+        }
+        if !matches!(
+            task.study,
+            workspace::StudyProgress::Running | workspace::StudyProgress::Pending
+        ) && task.study_meter.is_some()
+        {
+            card = card.child(crate::study_progress::View {
+                id: format!("box-study-retained-{id}").into(),
+                meter: task.study_meter.clone(),
+                active: false,
+            });
+        }
+        let mut actions = h_flex().gap_2().flex_wrap();
+        if let workspace::StudyProgress::Complete { output } = &task.study {
+            let reveal = output.clone();
+            let output = output.clone();
+            actions = actions.child(
+                primary_pill(SharedString::from(format!("box-open-study-{id}")))
+                    .icon(icons::book_open())
+                    .label(course2md::tr!("打开学习讲义"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_study_document(output.clone(), cx)
+                    })),
+            );
+            actions = actions.child(
+                quiet(SharedString::from(format!("box-study-location-{id}")))
+                    .icon(icons::folder_open())
+                    .label(course2md::tr!("查看讲义文件"))
+                    .on_click(move |_, _, cx| cx.reveal_path(&reveal)),
+            );
+        }
+        if matches!(
+            task.study,
+            workspace::StudyProgress::Failed { .. } | workspace::StudyProgress::Uncertain { .. }
+        ) {
+            let retry_id = id.clone();
+            actions =
+                actions.child(
+                    control(SharedString::from(format!("box-retry-study-{id}")))
+                        .icon(icons::refresh())
+                        .label(course2md::tr!("重试生成讲义"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.retry_automatic_study(&retry_id, cx)
+                        })),
+                );
+        }
+        if let Some(path) = &task.artifact {
+            let path = path.clone();
+            let title = task.plan.title.clone();
+            actions = actions.child(
+                control(SharedString::from(format!("box-read-raw-{id}")))
+                    .icon(icons::book_open())
+                    .label(course2md::tr!("阅读原稿"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_course(
+                            Course::from_completed(&Completed {
+                                out_dir: path.clone(),
+                                title: title.clone(),
+                                ..Default::default()
+                            }),
+                            cx,
+                        );
+                    })),
+            );
+        }
+        card.child(actions)
+    }
+
     /// Workbench box card for a task that needs the user: paused, failed or
     /// uncertain outcomes, each with its real recovery action.
     pub fn box_task_attention(&mut self, task: &TaskRecord, cx: &mut Context<Self>) -> Div {
+        if task.plan.study.enabled && task.state == TaskState::Complete {
+            return self.box_study_result(task, cx);
+        }
         let id = task.id.clone();
         let uncertain = task.has_uncertain() && task.handled_by.is_none();
         // 部分完成：正文已发布，逐项标明未完成的附加处理并可只补做该项。
@@ -3770,6 +4143,23 @@ fn task_status_label(task: &TaskRecord) -> String {
     if task.handled_by.is_some() {
         return course2md::tr!("已有后续处理任务").into();
     }
+    if task.state == TaskState::Complete {
+        match &task.study {
+            workspace::StudyProgress::Pending | workspace::StudyProgress::Running => {
+                return course2md::tr!("讲义生成中…").into();
+            }
+            workspace::StudyProgress::Complete { .. } => {
+                return course2md::tr!("学习讲义已生成").into();
+            }
+            workspace::StudyProgress::Failed { .. } => {
+                return course2md::tr!("学习讲义生成失败").into();
+            }
+            workspace::StudyProgress::Uncertain { .. } => {
+                return course2md::tr!("学习讲义结果未确认").into();
+            }
+            workspace::StudyProgress::NotRequested => {}
+        }
+    }
     if task.has_uncertain() {
         let purpose: std::collections::BTreeSet<_> = task
             .blocked
@@ -3943,8 +4333,25 @@ mod tests {
     use super::{
         PlanValidation, QueueItem, StageStatus, TaskGroup, WorkerWait, ai_stage_outcome,
         batch_note_title, task_failure_summary, task_stage_progress, update_draft_source_title,
-        update_input_form, validate_plan_config, validate_plan_storage, worker_wait_state,
+        update_input_form, validate_plan_config, validate_plan_storage, validate_study_selection,
+        worker_wait_state,
     };
+
+    #[test]
+    fn study_selection_requires_a_frozen_prompt_service_and_model_only_when_enabled() {
+        let mut study = crate::workspace::StudyPlan::default();
+        assert!(validate_study_selection(&study).is_ok());
+        study.enabled = true;
+        assert!(validate_study_selection(&study).is_err());
+        study.prompt = "逐页讲解公式".into();
+        assert!(validate_study_selection(&study).is_err());
+        study.service = Some("version-123".into());
+        assert!(validate_study_selection(&study).is_err());
+        study.model = Some("qwen-plus".into());
+        assert!(validate_study_selection(&study).is_ok());
+        study.model = Some("bad\nmodel".into());
+        assert!(validate_study_selection(&study).is_err());
+    }
 
     #[test]
     fn batch_titles_come_from_candidate_rows() {
@@ -4023,8 +4430,11 @@ mod tests {
                 config: Default::default(),
                 asr_service: None,
                 ai_service: None,
+                study: Default::default(),
             },
             state: crate::workspace::TaskState::Paused,
+            study: Default::default(),
+            study_meter: None,
             intent: crate::workspace::Intent::Run,
             created: 0,
             updated: 0,
@@ -4471,6 +4881,7 @@ mod tests {
                         config: Default::default(),
                         asr_service: None,
                         ai_service: None,
+                        study: Default::default(),
                     },
                     None,
                 )
@@ -4586,8 +4997,11 @@ mod tests {
                 config: Default::default(),
                 asr_service: None,
                 ai_service: None,
+                study: Default::default(),
             },
             state: TaskState::Partial,
+            study: Default::default(),
+            study_meter: None,
             intent: Intent::Run,
             created: 0,
             updated: 0,

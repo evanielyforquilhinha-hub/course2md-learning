@@ -1241,6 +1241,27 @@ impl Desktop {
             self.library_list.remeasure();
             self.library_rem = rem;
         }
+        if matches!(
+            items.as_slice(),
+            [LibraryItem::Empty | LibraryItem::Loading | LibraryItem::Checking]
+        ) {
+            let content = self.library_item(
+                &items[0],
+                LibraryRowContext {
+                    index: 0,
+                    last: true,
+                    focus: None,
+                    layout,
+                },
+                cx,
+            );
+            return theme::viewport_state(
+                "library-standalone-scroll",
+                &self.scrolls[Page::Library as usize],
+                content,
+            )
+            .into_any_element();
+        }
         let focus: Rc<Vec<FocusHandle>> = Rc::new(self.library_focus.clone());
         let state = self.library_list.clone();
         let items = Rc::new(items);
@@ -1337,7 +1358,7 @@ impl Desktop {
             LibraryItem::Empty => {
                 let query = self.value(Field::Search, cx).to_lowercase();
                 let content = v_flex()
-                    .py_12()
+                    .py_6()
                     .px_6()
                     .gap_4()
                     .items_center()
@@ -2096,7 +2117,11 @@ impl Desktop {
                     .text_color(color(GRAY))
                     .child(format!(
                         "{} · {}",
-                        self.course_meta(course).line(),
+                        if layout.stacked {
+                            self.course_meta(course).short_line()
+                        } else {
+                            self.course_meta(course).line()
+                        },
                         course.content_description()
                     )),
             ),
@@ -2328,413 +2353,6 @@ impl Desktop {
                 )
                 .child(list),
         )
-    }
-
-    /// Workbench "最近笔记": attention tasks first, then recent readable notes.
-    /// First use keeps a compact explanation below the source input.
-    pub fn recent_notes_section(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let linked = self.current_input_task(cx).map(|task| task.id.clone());
-        let mut attention: Vec<_> = self
-            .workspace
-            .as_ref()
-            .into_iter()
-            .flat_map(|w| w.state.tasks.iter())
-            .filter(|task| {
-                Some(&task.id) != linked.as_ref()
-                    && task.handled_by.is_none()
-                    && (matches!(
-                        task.state,
-                        crate::workspace::TaskState::NeedsAttention
-                            | crate::workspace::TaskState::Uncertain
-                            | crate::workspace::TaskState::Paused
-                    ) || (task.state == crate::workspace::TaskState::Partial
-                        && task.artifact.is_some()
-                        && !crate::task_ui::task_component_failures(task).is_empty()))
-            })
-            .collect::<Vec<_>>();
-        attention.sort_by_key(|task| std::cmp::Reverse(task.updated));
-        attention.truncate(2);
-        let attention: Vec<crate::workspace::TaskRecord> = attention.into_iter().cloned().collect();
-        let notes: Vec<Course> = self
-            .courses
-            .iter()
-            .filter(|course| {
-                !attention
-                    .iter()
-                    .any(|task| task.artifact.as_ref() == Some(&course.dir))
-            })
-            .take(4)
-            .cloned()
-            .collect();
-        if attention.is_empty() && notes.is_empty() {
-            let access = self.cached_library_access();
-            let checking = self.loading || access.is_none();
-            let unavailable = !self.library_issues.is_empty()
-                || access
-                    .as_ref()
-                    .is_some_and(|access| !access.unavailable.is_empty());
-            let title = if checking {
-                course2md::tr!("正在读取笔记库")
-            } else if unavailable {
-                course2md::tr!("暂时无法读取笔记库")
-            } else {
-                course2md::tr!("还没有笔记")
-            };
-            let description = if checking {
-                None
-            } else if unavailable {
-                Some(course2md::tr!("检查保存位置后，即可继续查看已有笔记"))
-            } else {
-                Some(course2md::tr!("整理好的笔记会出现在这里"))
-            };
-            let mut empty = v_flex()
-                .w_full()
-                .min_w_0()
-                .items_center()
-                .justify_center()
-                .py(rems(40. / 14.))
-                .px_4()
-                .gap_4()
-                .rounded(RADIUS_CARD)
-                .bg(color(SURFACE))
-                .child(
-                    h_flex()
-                        .size(rems(72. / 14.))
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
-                        .bg(color(SECONDARY_CONTAINER))
-                        .child(
-                            icons::book_open()
-                                .size(rems(32. / 14.))
-                                .text_color(color(GRAY)),
-                        ),
-                )
-                .child(
-                    v_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(SECTION_TITLE)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(title),
-                        )
-                        .children(description.map(|description| {
-                            div()
-                                .text_center()
-                                .text_size(TEXT_BODY)
-                                .text_color(color(GRAY))
-                                .child(description)
-                        })),
-                );
-            if unavailable && !checking {
-                empty = empty.child(
-                    quiet("recent-unavailable-library")
-                        .label(course2md::tr!("查看笔记库"))
-                        .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Library, cx))),
-                );
-            } else if !checking {
-                empty = empty.child(
-                    h_flex().justify_center().flex_wrap().gap_3().children(
-                        [
-                            course2md::tr!("粘贴链接或拖入视频"),
-                            course2md::tr!("读取字幕或识别语音"),
-                            course2md::tr!("AI 校对并生成笔记"),
-                        ]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, label)| {
-                            h_flex()
-                                .gap_2()
-                                .pl_1()
-                                .pr_3()
-                                .py_1()
-                                .rounded_full()
-                                .border_1()
-                                .border_color(color(HAIRLINE))
-                                .text_size(TEXT_BODY)
-                                .child(
-                                    h_flex()
-                                        .size(rems(24. / 14.))
-                                        .justify_center()
-                                        .items_center()
-                                        .rounded_full()
-                                        .bg(color(SECONDARY_CONTAINER))
-                                        .text_color(color(ACCENT))
-                                        .child((index + 1).to_string()),
-                                )
-                                .child(label)
-                        }),
-                    ),
-                );
-            }
-            return Some(empty);
-        }
-        let mut section = v_flex().w_full().min_w_0().gap(ROW_TITLE);
-        section = section.child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .gap_2()
-                .child(
-                    theme::accessible_text("recent-title", course2md::tr!("最近的笔记"))
-                        .role(Role::Heading)
-                        .text_size(SECTION_TITLE)
-                        .line_height(SECTION_TITLE_LINE)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .flex_1(),
-                )
-                .child(
-                    quiet("recent-all")
-                        .mr(-crate::theme::QUIET_INSET)
-                        .label(course2md::tr!("查看全部"))
-                        .child(crate::icons::chevron_right().size_4())
-                        .text_color(color(ACCENT))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.folder_filter = crate::FolderFilter::All;
-                            this.navigate(Page::Library, cx);
-                        })),
-                ),
-        );
-        let mut list = v_flex()
-            .w_full()
-            .min_w_0()
-            .rounded(RADIUS_CARD)
-            .bg(color(SURFACE));
-        let has_attention = !attention.is_empty();
-        for task in attention {
-            let id = task.id.clone();
-            let uncertain = task.state == crate::workspace::TaskState::Uncertain
-                || task
-                    .blocked
-                    .iter()
-                    .any(|request| request.reason == course2md::dispatch::REASON_UNCERTAIN);
-            let requires_repair = !uncertain && crate::task_ui::task_requires_service_repair(&task);
-            let partial_components = if task.state == crate::workspace::TaskState::Partial {
-                task.artifact
-                    .as_ref()
-                    .map(|_| {
-                        crate::task_ui::task_component_failures(&task)
-                            .into_iter()
-                            .filter_map(|(component, _, _)| {
-                                course2md::execution::Component::parse(&component)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            let mut actions = h_flex().gap_2().flex_wrap();
-            if let Some(course) = task.artifact.as_ref().and_then(|path| {
-                self.courses
-                    .iter()
-                    .find(|course| &course.dir == path)
-                    .cloned()
-            }) {
-                actions = actions.child(
-                    outline_pill(SharedString::from(format!("recent-attention-read-{id}")))
-                        .icon(icons::book_open())
-                        .label(if self.course_has_reading_position(&course) {
-                            course2md::tr!("继续阅读")
-                        } else {
-                            course2md::tr!("阅读笔记")
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_course(course.clone(), cx);
-                        })),
-                );
-            }
-            if requires_repair {
-                let repair_id = id.clone();
-                actions = actions.child(
-                    quiet(SharedString::from(format!("recent-repair-{id}")))
-                        .icon(icons::settings())
-                        .label(course2md::tr!("修复 AI 服务并补做"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.repair_task_service(repair_id.clone(), window, cx);
-                        })),
-                );
-            } else if !uncertain && !partial_components.is_empty() {
-                let retry_id = id.clone();
-                let labels = partial_components
-                    .iter()
-                    .map(|component| component.as_str().to_owned())
-                    .collect::<Vec<_>>();
-                let label = crate::task_ui::retry_components_label(&labels);
-                actions = actions.child(
-                    quiet(SharedString::from(format!("recent-retry-{id}")))
-                        .icon(icons::refresh())
-                        .label(label)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.reprocess_task(
-                                retry_id.clone(),
-                                partial_components.clone(),
-                                Vec::new(),
-                                cx,
-                            );
-                        })),
-                );
-            } else if !uncertain && task.state == crate::workspace::TaskState::Paused {
-                let resume_id = id.clone();
-                actions = actions.child(
-                    outline_pill(SharedString::from(format!("recent-resume-{id}")))
-                        .icon(icons::play_arrow())
-                        .label(course2md::tr!("继续生成"))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_task_intent(
-                                resume_id.clone(),
-                                crate::workspace::Intent::Run,
-                                cx,
-                            );
-                        })),
-                );
-            } else {
-                actions = actions.child(
-                    outline_pill(SharedString::from(format!("recent-task-{id}")))
-                        .icon(icons::task())
-                        .label(course2md::tr!("查看任务"))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            // 统一走 navigate()：保存 New 草稿、阅读位置、跟随清理
-                            this.select_task(&id, cx);
-                            this.navigate(Page::Task, cx);
-                        })),
-                );
-            }
-            let summary = crate::task_ui::task_attention_summary(&task);
-            list = list.child(
-                v_flex()
-                    .w_full()
-                    .min_w_0()
-                    .p_3()
-                    .gap_2()
-                    .bg(color(SURFACE))
-                    // Same order as every task and note row: title, status, actions.
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .gap_3()
-                            .items_center()
-                            .flex_wrap()
-                            .child(
-                                div()
-                                    .min_w(rems(12.))
-                                    .flex_1()
-                                    .whitespace_normal()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(task.plan.title.clone()),
-                            )
-                            .child(badge(BadgeKind::Warning).child(task.state.label()))
-                            .child(actions),
-                    )
-                    .when(summary != task.state.label(), |card| {
-                        card.child(
-                            div()
-                                .text_sm()
-                                .text_color(color(GRAY))
-                                .whitespace_normal()
-                                .child(summary),
-                        )
-                    }),
-            );
-        }
-        for (index, course) in notes.iter().enumerate() {
-            let selected = course.clone();
-            let meta = self.course_meta(course);
-            let duration = meta
-                .source
-                .as_ref()
-                .and_then(|source| source.duration)
-                .map(course2md::render::fmt_ts);
-            let metadata = meta.short_line();
-            if index > 0 || has_attention {
-                list = list.child(inset_divider());
-            }
-            let row = control(("recent-note", index))
-                .ghost()
-                .w_full()
-                .h_auto()
-                .p_4()
-                .rounded(RADIUS_CARD)
-                .accessibility_label(course2md::tr!("阅读 {}", course.title))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .items_center()
-                        .gap_4()
-                        .child(
-                            row_cover()
-                                .relative()
-                                .aspect_ratio(16. / 9.)
-                                .rounded(RADIUS_SMALL)
-                                .bg(color(SECONDARY_CONTAINER))
-                                .overflow_hidden()
-                                .when_some(course.thumbnail.clone(), |cover, path| {
-                                    cover.child(
-                                        img(path)
-                                            .size_full()
-                                            .rounded(RADIUS_SMALL)
-                                            .object_fit(ObjectFit::Cover),
-                                    )
-                                })
-                                .when_some(duration, |cover, duration| {
-                                    cover.child(
-                                        div()
-                                            .absolute()
-                                            .right(px(4.))
-                                            .bottom(px(4.))
-                                            .px(px(4.))
-                                            .py(px(1.))
-                                            .rounded(px(3.))
-                                            .bg(color(INK))
-                                            .text_color(color(CANVAS))
-                                            .text_size(rems(10. / 14.))
-                                            .font_weight(FontWeight::NORMAL)
-                                            .child(duration),
-                                    )
-                                }),
-                        )
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .text_size(ROW_TITLE)
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(course.title.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(TEXT_BODY)
-                                        .font_weight(FontWeight::NORMAL)
-                                        .text_color(color(GRAY))
-                                        .child(metadata),
-                                )
-                                .when(course.incomplete(), |view| view.child(incomplete_badge())),
-                        )
-                        .child(
-                            crate::icons::chevron_right()
-                                .size_4()
-                                .flex_shrink_0()
-                                .text_color(color(GRAY)),
-                        ),
-                )
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.open_course(selected.clone(), cx)),
-                );
-            list = list
-                .child(row)
-                .children(self.course_read_error(course, index, cx));
-        }
-        Some(section.child(list))
     }
 }
 

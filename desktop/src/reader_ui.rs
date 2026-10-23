@@ -4,7 +4,6 @@ use crate::{notes::PreviewBlock, reader_navigation as nav, theme::*};
 use gpui_component::{
     button::*,
     menu::{DropdownMenu, PopupMenu, PopupMenuItem},
-    scroll::{Scrollbar, ScrollbarMode},
 };
 use std::{
     cell::{Cell, RefCell},
@@ -1336,14 +1335,7 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize) -> AnyElement {
     let preview = &flow.preview;
     let content = match item {
         NoteItem::Title if !flow.show_title => div().into_any_element(),
-        NoteItem::Title => theme::accessible_text("reader-title", preview.course.title.clone())
-            .role(Role::Heading)
-            .flex_shrink_0()
-            .min_w_0()
-            .whitespace_normal()
-            .text_size(TEXT_DISPLAY)
-            .font_weight(FontWeight::SEMIBOLD)
-            .into_any_element(),
+        NoteItem::Title => reader_title(preview.course.title.clone()).into_any_element(),
         NoteItem::SummaryLabel(_) => {
             theme::accessible_text("reader-summary-label", course2md::tr!("摘要"))
                 .role(Role::Heading)
@@ -2771,17 +2763,9 @@ impl Desktop {
             .min_w_0()
             .gap_3()
             .flex_shrink_0()
-            .when(compact, |view| view.gap_1())
-            .when(!compact, |view| {
-                view.max_h(relative(0.45))
-                    .when(self.reader_ui.info_open, |view| {
-                        view.max_h(px(available_height * 0.45))
-                    })
-                    .overflow_y_scroll()
-                    .track_scroll(&controls_scroll)
-            });
+            .when(compact, |view| view.gap_1());
         let ReaderHeaderParts { back, title, meta } =
-            self.reader_metadata_row(preview, compact, short, &controls_scroll, cx);
+            self.reader_metadata_row(preview, compact, &controls_scroll, cx);
         let (heading, scrolling_title) = if compact {
             (None, Some(title))
         } else {
@@ -2801,26 +2785,22 @@ impl Desktop {
         );
         // The return leads the tool bar; title and facts share the article's
         // left edge below it.
-        page = page.children(heading);
         let (inline_meta, panel_meta) = if short { (None, meta) } else { (meta, None) };
-        page = page.children(inline_meta);
-        let (fixed_header, mut page) = if compact {
-            (
-                Some(page),
-                v_flex()
-                    .id("reader-extra-controls")
-                    .w_full()
-                    .min_w_0()
-                    .min_h_0()
-                    .flex_shrink_0()
-                    .gap_2()
-                    .max_h(px(available_height * 0.28))
-                    .overflow_y_scroll()
-                    .track_scroll(&controls_scroll),
-            )
-        } else {
-            (None, page)
-        };
+        let fixed_header = page;
+        // Return, view selection and search always remain reachable. Only
+        // document identity and status details consume this bounded scroll area.
+        let mut page = v_flex()
+            .id("reader-extra-controls")
+            .w_full()
+            .min_w_0()
+            .min_h_0()
+            .flex_shrink_0()
+            .gap_2()
+            .max_h(px(available_height * if compact { 0.28 } else { 0.36 }))
+            .overflow_y_scroll()
+            .track_scroll(&controls_scroll)
+            .children(heading)
+            .children(inline_meta);
         page = page.children(self.course_export_feedback(&preview.course, cx));
         if self.reading {
             page = page.child(crate::motion::enter(
@@ -2843,7 +2823,7 @@ impl Desktop {
             .min_w_0()
             .min_h_0()
             .flex_shrink_0()
-            .children(fixed_header)
+            .child(fixed_header)
             .child(page)
             .when(self.reader_ui.info_open, |view| {
                 view.gap_2().children(information_panel)
@@ -3016,6 +2996,25 @@ struct ReaderHeaderParts {
     meta: Option<AnyElement>,
 }
 
+/// Stretch the actual text leaf to the reading width before measuring its
+/// wrapped height. A block wrapper's width alone does not constrain its text
+/// child consistently during the virtual list's intrinsic measurement pass.
+fn reader_title(title: impl Into<SharedString>) -> Stateful<Div> {
+    theme::accessible_text("reader-title", title)
+        .role(Role::Heading)
+        .flex()
+        .flex_col()
+        .items_stretch()
+        .w_full()
+        .h_auto()
+        .flex_shrink_0()
+        .min_w_0()
+        .whitespace_normal()
+        .text_size(TEXT_DISPLAY)
+        .line_height(rems(40. / 14.))
+        .font_weight(FontWeight::SEMIBOLD)
+}
+
 struct ReaderToolbarParts {
     bar: Div,
     compact_search: Option<Div>,
@@ -3043,7 +3042,6 @@ impl Desktop {
         &mut self,
         preview: &Rc<notes::Preview>,
         compact: bool,
-        short_reader: bool,
         controls_scroll: &ScrollHandle,
         cx: &mut Context<Self>,
     ) -> ReaderHeaderParts {
@@ -3062,26 +3060,16 @@ impl Desktop {
             Page::Settings => course2md::tr!("设置"),
             _ => course2md::tr!("笔记库"),
         };
-        let title = theme::accessible_text("reader-title", preview.course.title.clone())
-            .role(Role::Heading)
-            .when(!short_reader, |title| title.flex_1())
-            .when(short_reader, |title| title.flex_shrink_0())
-            .min_w_0()
-            .whitespace_normal()
-            .text_size(TEXT_DISPLAY)
-            .font_weight(FontWeight::SEMIBOLD);
+        let title = reader_title(preview.course.title.clone());
         let title = title.into_any_element();
-        let back = reveal(
-            "reveal-reader-back",
-            quiet("reader-back")
-                .icon(crate::icons::arrow_left())
-                .w(CONTROL_HEIGHT)
-                .px_0()
-                .accessibility_label(course2md::tr!("返回{}", return_label))
-                .tooltip(course2md::tr!("返回{}", return_label))
-                .on_click(cx.listener(|this, _, _, cx| this.navigate(this.result_origin, cx)))
-                .into_any_element(),
-        );
+        let back = quiet("reader-back")
+            .icon(crate::icons::arrow_left())
+            .w(CONTROL_HEIGHT)
+            .px_0()
+            .accessibility_label(course2md::tr!("返回{}", return_label))
+            .tooltip(course2md::tr!("返回{}", return_label))
+            .on_click(cx.listener(|this, _, _, cx| this.navigate(this.result_origin, cx)))
+            .into_any_element();
         // Meta line 1: 作者 · 时长 · 平台 BV 号 · 打开原视频；无数据的字段省略。
         let mut facts = preview.facts.clone();
         let meta = &preview.document.meta;
@@ -3095,7 +3083,13 @@ impl Desktop {
             }
         };
         facts.extend(platform.map(str::to_owned));
-        let mut meta_facts = h_flex().gap_2().flex_wrap().items_center();
+        let mut meta_facts = h_flex()
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .gap_2()
+            .flex_wrap()
+            .items_center();
         if !facts.is_empty() {
             meta_facts = meta_facts.child(
                 theme::accessible_text("reader-facts", facts.join(" · "))
@@ -3359,11 +3353,14 @@ impl Desktop {
             toolbar = toolbar.child(
                 outline_pill("export-note")
                     .icon(icons::download())
-                    .label(if exporting_current {
-                        course2md::tr!("正在导出…")
-                    } else {
-                        course2md::tr!("导出")
+                    .when(!compact, |button| {
+                        button.label(if exporting_current {
+                            course2md::tr!("正在导出…")
+                        } else {
+                            course2md::tr!("导出")
+                        })
                     })
+                    .tooltip(course2md::tr!("复制或导出整份笔记"))
                     .accessibility_label(course2md::tr!("复制或导出整份笔记"))
                     .child(crate::icons::chevron_down().size_4().flex_shrink_0())
                     .loading(exporting_current)
@@ -3379,6 +3376,23 @@ impl Desktop {
                     }),
             );
         }
+        let study_course = preview.course.clone();
+        toolbar = toolbar.child(
+            outline_pill("reader-study-notes")
+                .icon(icons::book_open())
+                .when(!compact || self.study_running(), |button| {
+                    button.label(if self.study_running() {
+                        course2md::tr!("讲义生成中…")
+                    } else {
+                        course2md::tr!("AI 学习讲义")
+                    })
+                })
+                .accessibility_label(course2md::tr!("AI 学习讲义"))
+                .tooltip(course2md::tr!("AI 学习讲义"))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_course_study(study_course.clone(), window, cx);
+                })),
+        );
         toolbar = toolbar
             .child(self.reader_more_menu(preview, short_reader, cx))
             .children(short_search);
@@ -3500,6 +3514,8 @@ impl Desktop {
         let exported = self.reader_ui.exports.get(&preview.course.dir).cloned();
         let short_export_course = preview.course.clone();
         let short_export_folder = self.reader_ui.export_folder.clone();
+        let study_output = self.saved_study_output(&preview.course);
+        let study_course = preview.course.clone();
         quiet("reader-more")
             .when(short_reader, |button| {
                 button.track_focus(&self.reader_ui.menu_focus)
@@ -3617,6 +3633,30 @@ impl Desktop {
                                 });
                             }),
                     );
+                if let Some(path) = study_output.clone() {
+                    let regenerate = more_weak.clone();
+                    let course = study_course.clone();
+                    menu = menu
+                        .separator()
+                        .item(
+                            PopupMenuItem::new(course2md::tr!("查看讲义文件"))
+                                .icon(icons::folder_open())
+                                .on_click(move |_, _, cx| cx.reveal_path(&path)),
+                        )
+                        .item(
+                            PopupMenuItem::new(course2md::tr!("重新生成学习讲义…"))
+                                .icon(icons::auto_fix())
+                                .on_click(move |_, window, cx| {
+                                    let _ = regenerate.update(cx, |this, cx| {
+                                        this.configure_study_regeneration(
+                                            course.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }),
+                        );
+                }
                 if let Some(path) = exported.clone() {
                     menu = menu.item(
                         PopupMenuItem::new(course2md::tr!("显示上次导出的文件"))
@@ -4921,7 +4961,7 @@ impl Desktop {
         });
         let scrollbar = details
             .is_some()
-            .then(|| Scrollbar::vertical(&viewer.scroll).mode(ScrollbarMode::Always));
+            .then(|| crate::backend::vertical_scrollbar(&viewer.scroll));
         let body = v_flex()
             .id("reader-image-dialog")
             .relative()
@@ -5541,6 +5581,7 @@ mod tests {
                 config: Default::default(),
                 asr_service: None,
                 ai_service: None,
+                study: Default::default(),
             },
             state: workspace::TaskState::Complete,
             intent: workspace::Intent::Run,
@@ -5557,6 +5598,8 @@ mod tests {
             logs: Vec::new(),
             blocked: Vec::new(),
             resend: Vec::new(),
+            study: Default::default(),
+            study_meter: None,
         };
         (task, library)
     }
@@ -5714,6 +5757,68 @@ mod flow_tests {
     };
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    struct ReaderTitleHarness {
+        width: f32,
+        scale: f32,
+    }
+
+    impl Render for ReaderTitleHarness {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            window.set_rem_size(px(14. * self.scale));
+            div()
+                .flex()
+                .flex_col()
+                .w(px(self.width))
+                .child(
+                    super::reader_title(
+                        "复变函数与积分变换：从复数定义到实部虚部的逐步分析与习题讲解。".repeat(3),
+                    )
+                    .debug_selector(|| "reader-title-fixture".into()),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .debug_selector(|| "reader-meta-fixture".into())
+                        .child("教师 · 课程时长 · 打开原视频"),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn long_reader_title_wraps_at_the_pane_width_before_metadata(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| ReaderTitleHarness {
+            width: 672.,
+            scale: 1.,
+        });
+        for (width, scale) in [(672., 1.), (360., 1.), (360., 2.)] {
+            cx.update(|window, cx| {
+                view.update(cx, |view, _| {
+                    view.width = width;
+                    view.scale = scale;
+                });
+                window.draw(cx).clear(cx);
+            });
+            let title = cx.debug_bounds("reader-title-fixture").unwrap();
+            let meta = cx.debug_bounds("reader-meta-fixture").unwrap();
+            assert!(
+                title.size.height > px(40. * scale),
+                "long title must occupy multiple lines"
+            );
+            assert!(
+                title.size.width <= px(width),
+                "title must fit its reading pane"
+            );
+            assert!(
+                meta.top() >= title.bottom(),
+                "metadata must follow the complete title"
+            );
+            assert!(
+                meta.top() <= title.bottom() + px(1.),
+                "title must not reserve unrelated blank space"
+            );
+        }
+    }
 
     fn blocks(count: usize) -> Vec<PreviewBlock> {
         (0..count)

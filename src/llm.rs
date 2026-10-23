@@ -30,6 +30,7 @@ const BATCH: usize = 20;
 pub enum LlmProvider {
     /// OpenAI 兼容 /chat/completions 端点
     #[default]
+    #[serde(alias = "openai-compatible")]
     OpenAiCompatible,
     /// 本地 Ollama 服务（OpenAI 兼容方言，无需密钥）
     Ollama,
@@ -152,6 +153,158 @@ pub(crate) fn chat_agent() -> ureq::Agent {
 const ERROR_BODY_LIMIT: u64 = 4 * 1024 * 1024;
 /// 单次请求输出 token 上限（校对与摘要共用）。
 pub(crate) const CHAT_MAX_TOKENS: u32 = 16384;
+
+const AI_REQUEST_LIMIT: u64 = 48 * 1024 * 1024;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AiRequest {
+    settings: LlmSettings,
+    messages: Vec<serde_json::Value>,
+    #[serde(default = "default_ai_max_tokens")]
+    max_tokens: u32,
+}
+
+fn default_ai_max_tokens() -> u32 {
+    CHAT_MAX_TOKENS
+}
+
+fn read_ai_request(reader: impl std::io::Read) -> Result<AiRequest> {
+    use std::io::Read;
+    let invalid = || {
+        anyhow::anyhow!(crate::tr!(
+            "AI 请求参数无效 / Invalid AI request parameters"
+        ))
+    };
+    let mut bytes = Vec::new();
+    reader
+        .take(AI_REQUEST_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid())?;
+    anyhow::ensure!(bytes.len() as u64 <= AI_REQUEST_LIMIT, invalid());
+    let request: AiRequest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    validate(&request.settings).map_err(|_| invalid())?;
+    anyhow::ensure!((1..=65536).contains(&request.max_tokens), invalid());
+    anyhow::ensure!(
+        !request.messages.is_empty() && request.messages.len() <= 128,
+        invalid()
+    );
+    anyhow::ensure!(
+        request.settings.model.len() <= 256
+            && !request.settings.model.chars().any(char::is_control),
+        invalid()
+    );
+    if request.settings.provider != LlmProvider::Codex {
+        let url =
+            crate::config::ensure_http_url(&request.settings.base_url).map_err(|_| invalid())?;
+        anyhow::ensure!(
+            url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none(),
+            invalid()
+        );
+        anyhow::ensure!(
+            !crate::config::conflicting_endpoint_suffix(
+                url.path(),
+                "/chat/completions",
+                &[
+                    "/responses",
+                    "/audio/transcriptions",
+                    "/generate",
+                    "/api/chat"
+                ]
+            ),
+            invalid()
+        );
+    } else {
+        anyhow::ensure!(
+            request.settings.base_url.trim().is_empty()
+                || request.settings.base_url.trim().trim_end_matches('/')
+                    == crate::provider::CODEX_BASE_URL,
+            invalid()
+        );
+    }
+    let mut has_user = false;
+    for message in &request.messages {
+        let obj = message.as_object().ok_or_else(invalid)?;
+        anyhow::ensure!(
+            obj.len() == 2 && obj.contains_key("role") && obj.contains_key("content"),
+            invalid()
+        );
+        let role = message["role"].as_str().ok_or_else(invalid)?;
+        anyhow::ensure!(
+            matches!(role, "system" | "developer" | "user" | "assistant"),
+            invalid()
+        );
+        has_user |= role == "user";
+        match &message["content"] {
+            serde_json::Value::String(text) => anyhow::ensure!(!text.trim().is_empty(), invalid()),
+            serde_json::Value::Array(parts) => {
+                anyhow::ensure!(!parts.is_empty() && parts.len() <= 256, invalid());
+                for part in parts {
+                    match part["type"].as_str() {
+                        Some("text") => anyhow::ensure!(
+                            part["text"].as_str().is_some_and(|t| !t.trim().is_empty()),
+                            invalid()
+                        ),
+                        Some("image_url") if role == "user" => {
+                            let image = part["image_url"]["url"].as_str().ok_or_else(invalid)?;
+                            let Some((prefix, encoded)) = image.split_once(",") else {
+                                return Err(invalid());
+                            };
+                            anyhow::ensure!(
+                                matches!(
+                                    prefix,
+                                    "data:image/jpeg;base64"
+                                        | "data:image/png;base64"
+                                        | "data:image/webp;base64"
+                                        | "data:image/gif;base64"
+                                ),
+                                invalid()
+                            );
+                            use base64::Engine as _;
+                            anyhow::ensure!(
+                                !encoded.is_empty()
+                                    && base64::engine::general_purpose::STANDARD
+                                        .decode(encoded)
+                                        .is_ok(),
+                                invalid()
+                            );
+                        }
+                        _ => return Err(invalid()),
+                    }
+                }
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    anyhow::ensure!(has_user, invalid());
+    Ok(request)
+}
+
+/// One native request. Secrets stay in memory and provider errors are never echoed.
+pub fn ai_request(reader: impl std::io::Read) -> Result<serde_json::Value> {
+    let request = read_ai_request(reader)?;
+    let s = &request.settings;
+    let body = crate::provider::conversation_body(s, &request.messages, request.max_tokens)?;
+    let mut response = request_chat_once(&chat_agent(), s, &body, Purpose::Summary, "teaching", &|_| Ok(()))
+        .map_err(|failure| {
+            // Authentication refresh and SSE errors can originate outside dispatch;
+            // retain status only, never a raw error that might contain credentials.
+            anyhow::anyhow!(crate::tr!("AI 请求未完成（HTTP {}）；请检查服务、模型与登录状态 / AI request failed (HTTP {}); check service, model and login", failure.status.map(|n| n.to_string()).unwrap_or_else(|| "unknown".into()), failure.status.map(|n| n.to_string()).unwrap_or_else(|| "unknown".into())))
+        })?;
+    if response["model"].as_str().is_none_or(str::is_empty) {
+        response["model"] = s.model.clone().into();
+    }
+    if let (Some(input), Some(output)) = (
+        response["usage"]["prompt_tokens"].as_u64(),
+        response["usage"]["completion_tokens"].as_u64(),
+    ) {
+        response["usage"]["total_tokens"] = input.saturating_add(output).into();
+    }
+    Ok(response)
+}
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PolishReport {
@@ -960,6 +1113,74 @@ pub fn print_status(cfg: &crate::settings::ConfigFile) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ai_bridge_rejects_malformed_protocol_without_echoing_secrets() {
+        let settings = serde_json::json!({"provider":"openai-compatible","model":"selected","base_url":"http://localhost/v1","api_key":"never-print"});
+        let valid =
+            serde_json::json!({"settings":settings,"messages":[{"role":"user","content":"teach"}]});
+        assert!(read_ai_request(serde_json::to_vec(&valid).unwrap().as_slice()).is_ok());
+        for value in [
+            serde_json::json!({"settings":settings,"messages":[],"unknown":"never-print"}),
+            serde_json::json!({"settings":settings,"messages":[{"role":"tool","content":"never-print"}]}),
+            serde_json::json!({"settings":settings,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://remote.invalid/private"}}]}]}),
+            serde_json::json!({"settings":{"provider":"unknown","api_key":"never-print"},"messages":[]}),
+        ] {
+            let error = read_ai_request(serde_json::to_vec(&value).unwrap().as_slice())
+                .err()
+                .unwrap();
+            assert!(!error.to_string().contains("never-print"));
+        }
+        for endpoint in [
+            "https://user:never-print@example.test/v1",
+            "https://example.test/v1?key=never-print",
+            "https://example.test/v1/responses",
+        ] {
+            let mut value = valid.clone();
+            value["settings"]["base_url"] = endpoint.into();
+            assert!(read_ai_request(serde_json::to_vec(&value).unwrap().as_slice()).is_err());
+        }
+    }
+
+    #[test]
+    fn ai_bridge_rejection_is_one_attempt_and_hides_provider_body() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).unwrap();
+                buffer.extend_from_slice(&chunk[..n]);
+                if let Some(end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let header = String::from_utf8_lossy(&buffer[..end]);
+                    let length = header
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap();
+                    if buffer.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let body = r#"{"error":{"message":"never-print-secret response_format unsupported"}}"#;
+            write!(stream,"HTTP/1.1 429 Too Many Requests\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+        });
+        let input = serde_json::json!({"settings":{"model":"selected","base_url":format!("http://{address}/v1"),"api_key":"never-print-secret"},"messages":[{"role":"user","content":"teach json"}]});
+        let error = ai_request(serde_json::to_vec(&input).unwrap().as_slice()).unwrap_err();
+        server.join().unwrap();
+        assert!(error.to_string().contains("429"));
+        assert!(!error.to_string().contains("never-print-secret"));
+    }
 
     #[test]
     fn validate_rejects_unusable_service_urls() {

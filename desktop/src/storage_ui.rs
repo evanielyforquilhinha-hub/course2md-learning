@@ -454,6 +454,9 @@ fn rebind_location(
             if let Some(path) = &mut task.artifact {
                 storage::relocate_path(path, old, destination);
             }
+            if let workspace::StudyProgress::Complete { output } = &mut task.study {
+                storage::relocate_path(output, old, destination);
+            }
             if let Some(path) = &mut task.plan.subtitle {
                 storage::relocate_path(path, old, destination);
             }
@@ -489,6 +492,13 @@ fn rebind_location(
         }
     }
     Ok(())
+}
+
+fn has_running_study(state: &workspace::State, library_id: &str) -> bool {
+    state.tasks.iter().any(|task| {
+        task.plan.library_id == library_id
+            && matches!(task.study, workspace::StudyProgress::Running)
+    })
 }
 
 struct LocatedLibrary {
@@ -570,7 +580,13 @@ impl Desktop {
         }
         self.storage_ui
             .begin(StorageOp::Relocate(library_id.clone()));
-        if self.job.is_some() || self.preview_workers > 0 {
+        if self.job.is_some()
+            || self.preview_workers > 0
+            || self
+                .workspace
+                .as_ref()
+                .is_some_and(|w| has_running_study(&w.state, &library_id))
+        {
             self.storage_ui.error =
                 Some(course2md::tr!("正在处理内容，结束或停止后再重新定位").into());
             self.open_storage_dialog(window, cx);
@@ -611,6 +627,7 @@ impl Desktop {
                         this.wake_poll();
                         this.storage_ui.error = Some(message);
                         this.open_storage_dialog(window, cx);
+                        this.resume_pending_studies(cx);
                         cx.notify();
                     });
                     return;
@@ -621,6 +638,7 @@ impl Desktop {
                     this.storage_ui.busy = false;
                     this.wake_poll();
                     this.start_next_task(cx);
+                    this.resume_pending_studies(cx);
                     cx.notify();
                 });
                 return;
@@ -645,7 +663,12 @@ impl Desktop {
                 }
                 let result = result.and_then(|located| {
                     ensure!(!this.closing && !cancel.load(Ordering::Relaxed), course2md::tr!("已取消重新定位"));
-                    ensure!(this.job.is_none() && this.preview_workers == 0, course2md::tr!("内容仍在处理中，请停止后重新定位"));
+                    ensure!(
+                        this.job.is_none()
+                            && this.preview_workers == 0
+                            && this.workspace.as_ref().is_some_and(|w| !has_running_study(&w.state, &located.library_id)),
+                        course2md::tr!("内容仍在处理中，请停止后重新定位")
+                    );
                     this.workspace.as_mut().context(registry_unavailable())?
                         .transaction(|state| publish_relocation(state, &located))?;
                     Ok(located)
@@ -691,6 +714,7 @@ impl Desktop {
                     }
                 }
                 this.start_next_task(cx);
+                this.resume_pending_studies(cx);
                 cx.notify();
             });
         }).detach();
@@ -775,6 +799,7 @@ impl Desktop {
                     this.storage_ui.progress = Progress::default();
                     this.storage_ui.error = Some(message);
                     this.start_next_task(cx);
+                    this.resume_pending_studies(cx);
                     cx.notify();
                 });
                 return;
@@ -824,6 +849,7 @@ impl Desktop {
                 this.storage_ui.cancel = None;
                 if !accepted {
                     this.start_next_task(cx);
+                    this.resume_pending_studies(cx);
                     cx.notify();
                     return;
                 }
@@ -855,6 +881,7 @@ impl Desktop {
                 }
                 this.refresh_library(cx);
                 this.start_next_task(cx);
+                this.resume_pending_studies(cx);
                 cx.notify();
             });
         })
@@ -1121,6 +1148,12 @@ impl Desktop {
             self.open_storage_dialog(window, cx);
             return;
         };
+        if has_running_study(&state, &library_id) {
+            self.storage_ui.error =
+                Some(course2md::tr!("正在生成 AI 学习讲义，请完成后再移动笔记库").into());
+            self.open_storage_dialog(window, cx);
+            return;
+        }
         // Only a conversion task can pause and resume around a move.
         if self.job.is_some() && self.active_task.is_none() {
             self.storage_ui.error = Some(course2md::tr!("模型下载完成或停止后再移动笔记库").into());
@@ -1278,6 +1311,7 @@ impl Desktop {
                         this.refresh_library(cx);
                         this.poll_storage(cx);
                         this.start_next_task(cx);
+                        this.resume_pending_studies(cx);
                     }
                     Err(error) => this.finish_storage_error(
                         course2md::tr!(
@@ -1303,6 +1337,7 @@ impl Desktop {
         self.refresh_library(cx);
         self.poll_storage(cx);
         self.start_next_task(cx);
+        self.resume_pending_studies(cx);
         cx.notify();
     }
 
@@ -1667,6 +1702,7 @@ impl Desktop {
                 // 与账号卡片同一组合：徽章与动作是标题行尾部的一个槽位，窄时整体换行。
                 // 强调顺序与其他卡片一致：描边主动作在前，安静的「打开位置」在后。
                 let trailing = h_flex()
+                    .max_w_full()
                     .gap_2()
                     .items_center()
                     .flex_wrap()
@@ -1713,6 +1749,7 @@ impl Desktop {
                         row.child(
                             outline_pill(("move-storage-location", index))
                                 .settings_text()
+                                .icon(icons::storage())
                                 .label(course2md::tr!("移动笔记库…"))
                                 .disabled(self.storage_ui.busy)
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1748,69 +1785,81 @@ impl Desktop {
                                 })),
                         )
                     });
-                locations =
-                    locations.child(
-                        crate::settings_ui::setting_surface()
-                            .min_w_0()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .min_w_0()
-                                    .items_center()
-                                    .gap(px(16.))
-                                    .child(
-                                        crate::settings_ui::settings_resource_icon(
-                                            icons::folder_open(),
-                                        )
-                                        .rounded(RADIUS_SMALL),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .gap_1()
-                                            .child(
-                                                accessible_text(
-                                                    ("storage-location-name", index),
-                                                    library.name.clone(),
-                                                )
-                                                .text_size(TEXT_SETTINGS_BODY)
-                                                .font_weight(FontWeight::NORMAL),
+                locations = locations.child(
+                    crate::settings_ui::setting_surface()
+                        .min_w_0()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .flex_wrap()
+                                .gap(px(16.))
+                                .child(
+                                    h_flex()
+                                        .flex_1()
+                                        .flex_basis(rems(320. / 14.))
+                                        .max_w_full()
+                                        .min_w_0()
+                                        .items_start()
+                                        .gap_3()
+                                        .child(
+                                            crate::settings_ui::settings_resource_icon(
+                                                icons::folder_open(),
                                             )
-                                            .child(
-                                                accessible_text(
-                                                    ("storage-location-path", index),
-                                                    root.display().to_string(),
+                                            .rounded(RADIUS_SMALL)
+                                            .flex_shrink_0(),
+                                        )
+                                        .child(
+                                            v_flex()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .gap_1()
+                                                .child(
+                                                    accessible_text(
+                                                        ("storage-location-name", index),
+                                                        library.name.clone(),
+                                                    )
+                                                    .whitespace_normal()
+                                                    .text_size(TEXT_SETTINGS_BODY)
+                                                    .font_weight(FontWeight::SEMIBOLD),
                                                 )
-                                                .font_family(
-                                                    gpui_component::Theme::global(cx)
-                                                        .mono_font_family
-                                                        .clone(),
-                                                )
-                                                .text_size(TEXT_SETTINGS_AUX)
-                                                .text_color(color(GRAY)),
-                                            ),
-                                    )
-                                    .child(trailing.flex_shrink_0()),
-                            )
-                            .when_some(
-                                check.and_then(|check| check.problem.clone()),
-                                |card, problem| {
-                                    card.child(theme::item_detail(
-                                        ("storage-location-problem", index),
-                                        problem,
-                                        DANGER,
-                                    ))
-                                },
-                            )
-                            .when(needs_reassociation, |card| {
+                                                .child(
+                                                    accessible_text(
+                                                        ("storage-location-path", index),
+                                                        root.display().to_string(),
+                                                    )
+                                                    .whitespace_normal()
+                                                    .font_family(
+                                                        gpui_component::Theme::global(cx)
+                                                            .mono_font_family
+                                                            .clone(),
+                                                    )
+                                                    .text_size(TEXT_SETTINGS_AUX)
+                                                    .text_color(color(GRAY)),
+                                                ),
+                                        ),
+                                )
+                                .child(trailing.flex_shrink_0()),
+                        )
+                        .when_some(
+                            check.and_then(|check| check.problem.clone()),
+                            |card, problem| {
                                 card.child(theme::item_detail(
-                                    ("storage-association-needed", index),
-                                    course2md::tr!("无法确认这是原来的笔记库，请检查后重新关联"),
-                                    WARNING,
+                                    ("storage-location-problem", index),
+                                    problem,
+                                    DANGER,
                                 ))
-                            }),
-                    );
+                            },
+                        )
+                        .when(needs_reassociation, |card| {
+                            card.child(theme::item_detail(
+                                ("storage-association-needed", index),
+                                course2md::tr!("无法确认这是原来的笔记库，请检查后重新关联"),
+                                WARNING,
+                            ))
+                        }),
+                );
             }
         }
         locations = locations.child(
@@ -1949,6 +1998,7 @@ impl Desktop {
                 }
                 this.refresh_library(cx);
                 this.start_next_task(cx);
+                this.resume_pending_studies(cx);
                 cx.notify();
             });
         })
@@ -1960,7 +2010,7 @@ impl Desktop {
 mod tests {
     use super::{
         LocationChecks, inspect_location, inspect_relocation, publish_location, publish_relocation,
-        relocate_preview, scan_locations, validate_registered_destination,
+        rebind_location, relocate_preview, scan_locations, validate_registered_destination,
     };
     use crate::{ConversionOptions, source, storage, workspace};
     use std::{path::PathBuf, sync::atomic::AtomicBool};
@@ -1972,6 +2022,55 @@ mod tests {
             root,
             previous_roots: Vec::new(),
         }
+    }
+
+    #[test]
+    fn library_rebind_updates_study_output_only_when_it_is_inside_the_library() {
+        let directory = tempfile::tempdir().unwrap();
+        let old = directory.path().join("old");
+        let new = directory.path().join("new");
+        let separate = directory.path().join("separate-study/index.html");
+        std::fs::create_dir_all(&old).unwrap();
+        let mut state = workspace::Workspace::open_at(
+            directory.path().join("record"),
+            old.clone(),
+            Default::default(),
+        )
+        .unwrap()
+        .state;
+        let library_id = state.default_library.clone();
+        let mut plan = workspace::TaskPlan {
+            operation: course2md::execution::Operation::Generate,
+            source: source::Source::default(),
+            source_id: "study-relocation".into(),
+            title: "Relocation".into(),
+            library_id: library_id.clone(),
+            folder: None,
+            options: Default::default(),
+            subtitle: None,
+            config: Default::default(),
+            asr_service: None,
+            ai_service: None,
+            study: Default::default(),
+        };
+        plan.study.enabled = true;
+        let id = state.enqueue(plan, None).unwrap().0;
+        state.task_mut(&id).unwrap().study = workspace::StudyProgress::Complete {
+            output: old.join("study/index.html"),
+        };
+        rebind_location(&mut state, &library_id, &[old.clone()], &new).unwrap();
+        assert!(matches!(
+            &state.task(&id).unwrap().study,
+            workspace::StudyProgress::Complete { output } if output == &new.join("study/index.html")
+        ));
+        state.task_mut(&id).unwrap().study = workspace::StudyProgress::Complete {
+            output: separate.clone(),
+        };
+        rebind_location(&mut state, &library_id, &[new], &old).unwrap();
+        assert!(matches!(
+            &state.task(&id).unwrap().study,
+            workspace::StudyProgress::Complete { output } if output == &separate
+        ));
     }
 
     #[test]
@@ -2056,6 +2155,7 @@ mod tests {
             config: course2md::settings::ConfigFile::default(),
             asr_service: Some("fixed-service-version".into()),
             ai_service: None,
+            study: Default::default(),
         };
         let (task_id, _) = workspace.state.enqueue(plan, None).unwrap();
         let task = workspace.state.task_mut(&task_id).unwrap();
@@ -2440,6 +2540,7 @@ mod tests {
             config,
             asr_service: Some("fixed-asr-version".into()),
             ai_service: Some("fixed-ai-version".into()),
+            study: Default::default(),
         };
         let (task_id, _) = workspace.state.enqueue(plan, None).unwrap();
         let old_task_work = workspace.state.task(&task_id).unwrap().work_dir.clone();

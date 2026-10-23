@@ -278,6 +278,9 @@ pub enum Command {
     /// 执行已保存的任务；从标准输入读取完整 JSON 参数 / Execute a saved task from stdin JSON
     #[command(hide = true)]
     RunTask,
+    /// Native teaching request bridge; credentials are read from stdin only.
+    #[command(hide = true)]
+    AiRequest,
     /// 管理本地识别模型 / Manage local speech models
     Models {
         #[command(subcommand)]

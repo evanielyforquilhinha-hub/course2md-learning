@@ -6,6 +6,24 @@ use crate::codex_ui::CodexSurface;
 use crate::model_discovery;
 use crate::preferences::FieldError;
 
+/// A route is distinct from the user's saved service name and exact model ID.
+pub(crate) fn ai_service_route_label(protocol: ServiceProtocol) -> &'static str {
+    match protocol {
+        ServiceProtocol::CodexResponses => course2md::tr!("ChatGPT 订阅（Codex 通道）"),
+        _ => protocol.choice_label(),
+    }
+}
+
+pub(crate) fn ai_service_billing_hint(protocol: ServiceProtocol) -> &'static str {
+    match protocol {
+        ServiceProtocol::CodexResponses => course2md::tr!(
+            "使用 ChatGPT 订阅的 Codex 通道，与 Work / Codex 共用额度；不使用普通 ChatGPT 对话额度。"
+        ),
+        ServiceProtocol::OllamaChat => course2md::tr!("使用本地 Ollama；不产生云端 API 费用。"),
+        _ => course2md::tr!("API 服务由服务商单独计费；额度与价格以服务商控制台为准。"),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum FormField {
     Name,
@@ -53,10 +71,73 @@ impl FormOwner {
 pub(crate) struct ServiceForm {
     inputs: BTreeMap<FormField, Entity<InputState>>,
     pub(crate) draft: ServiceDraft,
+    protocols: ProtocolDrafts,
     pub(crate) errors: Vec<FieldError>,
     pub(crate) models: model_discovery::State,
     pub(crate) show_key: bool,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Unsaved values belong to their service type, including a key typed in this form.
+/// A typed key is never published until Save and is wiped when this snapshot drops.
+struct ProtocolSelection {
+    draft: ServiceDraft,
+    typed_key: zeroize::Zeroizing<String>,
+}
+
+#[derive(Default)]
+struct ProtocolDrafts {
+    inactive: BTreeMap<&'static str, ProtocolSelection>,
+}
+
+impl ProtocolDrafts {
+    fn switch(
+        &mut self,
+        current: ServiceDraft,
+        typed_key: zeroize::Zeroizing<String>,
+        protocol: ServiceProtocol,
+    ) -> ProtocolSelection {
+        let old_address = current.address.trim().trim_end_matches('/');
+        let old_host = preferences::service_host(old_address, current.protocol);
+        self.inactive.insert(
+            current.protocol.id(),
+            ProtocolSelection {
+                draft: current.clone(),
+                typed_key,
+            },
+        );
+        if let Some(saved) = self.inactive.remove(protocol.id()) {
+            return saved;
+        }
+        let mut next = current;
+        if next.name.trim().is_empty() || Some(next.name.trim()) == old_host.as_deref() {
+            next.name.clear();
+        }
+        let ai_route_change = protocol.purpose() == ServicePurpose::Ai;
+        next.protocol = protocol;
+        if ai_route_change {
+            next.model.clear();
+            next.address = match protocol {
+                ServiceProtocol::CodexResponses => preferences::CODEX_ADDRESS,
+                ServiceProtocol::OllamaChat => preferences::OLLAMA_DEFAULT_ADDRESS,
+                _ => "",
+            }
+            .into();
+            next.authentication = if protocol.keyless() {
+                Authentication::None
+            } else {
+                Authentication::ApiKey
+            };
+            next.credential = None;
+            next.credential_source = None;
+        } else if protocol.keyless() {
+            next.authentication = Authentication::None;
+        }
+        ProtocolSelection {
+            draft: next,
+            typed_key: zeroize::Zeroizing::new(String::new()),
+        }
+    }
 }
 
 impl ServiceForm {
@@ -95,6 +176,7 @@ impl ServiceForm {
         let mut form = Self {
             inputs,
             draft: ServiceDraft::new(draft.protocol.purpose()),
+            protocols: ProtocolDrafts::default(),
             errors: Vec::new(),
             models: Default::default(),
             show_key: false,
@@ -131,6 +213,7 @@ impl ServiceForm {
 
     /// Shows `draft` with an empty, masked key field.
     pub(crate) fn load(&mut self, draft: ServiceDraft, window: &mut Window, cx: &mut App) {
+        self.protocols.inactive.clear();
         for (field, value) in [
             (FormField::Name, draft.name.clone()),
             (FormField::Address, draft.address.clone()),
@@ -186,52 +269,47 @@ impl ServiceForm {
         self.draft.protocol == ServiceProtocol::CodexResponses
     }
 
-    /// A keyless type drops authentication; an AI type change drops the model,
-    /// which does not carry across services. A name derived from the old address
-    /// follows the new type, and fixed Codex/Ollama addresses are filled or cleared.
+    /// Each type keeps its own unsaved values while the form remains open.
+    /// A first visit starts with that type's address and an empty model, rather
+    /// than carrying a cloud model or endpoint into a different service.
     fn switch_protocol(&mut self, protocol: ServiceProtocol, window: &mut Window, cx: &mut App) {
-        let current = self.value(FormField::Address, cx);
-        let current = current.trim().trim_end_matches('/').to_owned();
-        let name = self.current_draft(cx).name;
-        let previous_host = preferences::service_host(&current, self.draft.protocol);
-        if name.trim().is_empty() || Some(name.trim()) == previous_host.as_deref() {
-            self.draft.name.clear();
-            if let Some(input) = self.inputs.get(&FormField::Name) {
-                input.update(cx, |input, cx| input.set_value("", window, cx));
+        if self.draft.protocol == protocol {
+            return;
+        }
+        let ProtocolSelection {
+            draft: next,
+            typed_key: key,
+        } = self.protocols.switch(
+            self.current_draft(cx),
+            zeroize::Zeroizing::new(self.typed_key(cx)),
+            protocol,
+        );
+        for (field, value) in [
+            (FormField::Name, next.name.as_str()),
+            (FormField::Address, next.address.as_str()),
+            (FormField::Model, next.model.as_str()),
+            (FormField::Key, key.as_str()),
+        ] {
+            if let Some(input) = self.inputs.get(&field) {
+                input.update(cx, |input, cx| input.set_value(value, window, cx));
             }
         }
-        let kind_changed =
-            protocol.purpose() == ServicePurpose::Ai && self.draft.protocol != protocol;
-        self.draft.protocol = protocol;
-        if kind_changed {
-            self.draft.model.clear();
-            self.inputs[&FormField::Model].update(cx, |input, cx| input.set_value("", window, cx));
-        }
-        if protocol.keyless() {
-            self.draft.authentication = Authentication::None;
-            self.clear_key(window, cx);
-        }
-        let codex_address = [
-            preferences::CODEX_ADDRESS,
-            course2md::provider::CODEX_RESPONSES_URL,
-        ]
-        .contains(&current.as_str());
-        let address = match protocol {
-            ServiceProtocol::CodexResponses => Some(preferences::CODEX_ADDRESS),
-            ServiceProtocol::OllamaChat if current.is_empty() || codex_address => {
-                Some(preferences::OLLAMA_DEFAULT_ADDRESS)
-            }
-            // The fixed Codex address is not the user's; other input stays.
-            _ if codex_address => Some(""),
-            _ => None,
-        };
-        if let Some(address) = address {
-            self.inputs[&FormField::Address]
-                .update(cx, |input, cx| input.set_value(address, window, cx));
-            self.draft.address = address.into();
-        }
+        self.inputs[&FormField::Key].update(cx, |input, cx| {
+            input.set_placeholder(
+                if next.credential.is_some() {
+                    "••••••••"
+                } else {
+                    ""
+                },
+                window,
+                cx,
+            );
+            input.set_masked(true, window, cx);
+        });
+        self.draft = next;
         self.errors.clear();
         self.models.invalidate();
+        self.show_key = false;
     }
 }
 
@@ -333,7 +411,7 @@ impl Desktop {
                 group.options(
                     protocols
                         .iter()
-                        .map(|protocol| (protocol.id(), protocol.choice_label())),
+                        .map(|protocol| (protocol.id(), ai_service_route_label(*protocol))),
                 ),
                 |group, protocol| group.icon(protocol.id(), protocol_icon(*protocol)),
             )
@@ -523,5 +601,52 @@ impl Desktop {
                 form.models.invalidate();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Authentication, ProtocolDrafts, ServiceDraft, ServiceProtocol, ServicePurpose};
+    use zeroize::Zeroizing;
+
+    #[test]
+    fn switching_to_local_and_back_keeps_the_compatible_model() {
+        let mut draft = ServiceDraft::new(ServicePurpose::Ai);
+        draft.address = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions".into();
+        draft.model = "qwen-plus".into();
+        draft.authentication = Authentication::ApiKey;
+        let mut protocols = ProtocolDrafts::default();
+        let local = protocols.switch(
+            draft.clone(),
+            Zeroizing::new("temporary-key".to_owned()),
+            ServiceProtocol::OllamaChat,
+        );
+        assert_eq!(local.draft.address, "http://localhost:11434");
+        assert_eq!(local.draft.model, "");
+        assert_eq!(local.draft.authentication, Authentication::None);
+        assert_eq!(local.typed_key.as_str(), "");
+        let restored = protocols.switch(
+            local.draft,
+            Zeroizing::new(String::new()),
+            ServiceProtocol::AiChat,
+        );
+        assert_eq!(restored.draft.model, "qwen-plus");
+        assert_eq!(restored.draft.address, draft.address);
+        assert_eq!(restored.draft.authentication, Authentication::ApiKey);
+        assert_eq!(restored.typed_key.as_str(), "temporary-key");
+        let codex = protocols.switch(
+            restored.draft,
+            restored.typed_key,
+            ServiceProtocol::CodexResponses,
+        );
+        assert_eq!(codex.draft.model, "");
+        assert_eq!(codex.draft.address, super::preferences::CODEX_ADDRESS);
+        let again = protocols.switch(
+            codex.draft,
+            Zeroizing::new(String::new()),
+            ServiceProtocol::AiChat,
+        );
+        assert_eq!(again.draft.model, "qwen-plus");
+        assert_eq!(again.typed_key.as_str(), "temporary-key");
     }
 }

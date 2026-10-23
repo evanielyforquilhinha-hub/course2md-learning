@@ -159,6 +159,10 @@ pub fn save(cfg: &ConfigFile) -> Result<PathBuf> {
 
 /// `config init` 写入的带注释模板。默认值占位符由内置默认渲染，注释不会与实际默认脱节。
 pub fn template() -> String {
+    template_with_model_dir(&crate::config::model_dir_from(None))
+}
+
+fn template_with_model_dir(model_dir: &std::path::Path) -> String {
     use crate::config as c;
     let formats = crate::options::default_formats()
         .iter()
@@ -196,7 +200,6 @@ pub fn template() -> String {
             "{TRANSCRIPT_SOURCE}",
             c::TranscriptSource::default().to_string(),
         ),
-        ("{MODEL_DIR}", c::model_dir_from(None).display().to_string()),
         ("{LLM_ENABLED}", llm.enabled.to_string()),
         ("{LLM_BASE_URL}", llm.base_url),
         ("{LLM_MODEL}", llm.model),
@@ -209,6 +212,14 @@ pub fn template() -> String {
     .fold(TEMPLATE.to_string(), |text, (key, value)| {
         text.replace(key, &value)
     })
+    // serde_json emits the basic-string escapes TOML supports, on one line.
+    // Serialize the whole literal rather than placing an unescaped Windows path
+    // inside quotes. Insert it last so path names containing template markers stay literal.
+    .replace(
+        "{MODEL_DIR}",
+        &serde_json::to_string(model_dir.to_string_lossy().as_ref())
+            .expect("serializing a path string cannot fail"),
+    )
 }
 
 const TEMPLATE: &str = r#"# course2md 配置 / Configuration
@@ -255,7 +266,7 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 # 输出格式 / Output formats: md, html, json
 #formats = [{FORMATS}]
 # gpu/cpu 模型目录；默认使用系统缓存 / gpu/cpu model directory; platform cache by default
-#model_dir = "{MODEL_DIR}"
+#model_dir = {MODEL_DIR}
 # 成功后保留下载的视频 / Keep downloaded video after success
 #keep_video = {KEEP_VIDEO}
 # 继续上次中断的识别 / Continue interrupted transcription
@@ -368,9 +379,8 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn template_parses_to_built_in_defaults_when_uncommented() {
-        let text: String = super::template()
+    fn uncomment_values(template: &str) -> String {
+        template
             .lines()
             .map(|line| {
                 line.strip_prefix('#')
@@ -380,7 +390,38 @@ mod tests {
                     .unwrap_or(line)
             })
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\n")
+    }
+
+    #[test]
+    fn template_preserves_windows_path_quotes_and_unicode_when_uncommented() {
+        for value in [
+            r"C:\Users\Student\AppData\Local\course2md\models",
+            r#"E:\课程\高数 "公式"\复变函数\模型"#,
+            r"E:\课程\数学 α 🧮\new\tab\{LLM_MODEL}",
+        ] {
+            let path = std::path::Path::new(value);
+            let template = super::template_with_model_dir(path);
+            let commented: super::ConfigFile = toml::from_str(&template).unwrap();
+            assert!(commented.defaults.model_dir.is_none());
+            let file: super::ConfigFile = toml::from_str(&uncomment_values(&template)).unwrap();
+            assert_eq!(file.defaults.model_dir.as_deref(), Some(path));
+        }
+    }
+
+    #[test]
+    fn template_keeps_control_characters_inside_one_commented_value() {
+        let path = std::path::Path::new("E:\\课程\\quoted\"model\twith\nline\rreturn");
+        let template = super::template_with_model_dir(path);
+        let commented: super::ConfigFile = toml::from_str(&template).unwrap();
+        assert!(commented.defaults.model_dir.is_none());
+        let file: super::ConfigFile = toml::from_str(&uncomment_values(&template)).unwrap();
+        assert_eq!(file.defaults.model_dir.as_deref(), Some(path));
+    }
+
+    #[test]
+    fn template_parses_to_built_in_defaults_when_uncommented() {
+        let text = uncomment_values(&super::template());
         let file: super::ConfigFile = toml::from_str(&text).unwrap();
         let from_template =
             crate::options::resolve(String::new(), &Default::default(), &file).unwrap();

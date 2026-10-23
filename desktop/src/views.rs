@@ -12,6 +12,26 @@ pub(crate) fn apply_shell_title_bar_chrome(bar: TitleBar) -> TitleBar {
     bar.pl_0().bg(color(CANVAS)).border_b_0()
 }
 
+fn sidebar_is_compact(window: &Window) -> bool {
+    let scale = f32::from(window.rem_size()) / 14.;
+    f32::from(window.bounds().size.width) < 720. * scale
+}
+fn sidebar_width(window: &Window) -> f32 {
+    let scale = f32::from(window.rem_size()) / 14.;
+    if sidebar_is_compact(window) {
+        64. * scale
+    } else {
+        (if f32::from(window.bounds().size.width) < 1000. * scale {
+            164.
+        } else {
+            196.
+        }) * scale
+    }
+}
+fn content_pane_width(window: &Window) -> f32 {
+    (f32::from(window.bounds().size.width) - sidebar_width(window)).max(0.)
+}
+
 fn shell_column_for(page: Page) -> Div {
     shell_column_at(shell_column_width(page))
 }
@@ -28,7 +48,7 @@ fn shell_column_width(page: Page) -> AbsoluteLength {
 
 /// The max width includes both gutters; layout calculations use the same box.
 pub(super) fn shell_content_width(page: Page, window: &Window) -> f32 {
-    let width = f32::from(window.bounds().size.width);
+    let width = content_pane_width(window);
     let gutter = if matches!(page, Page::New | Page::Settings) && is_compact(window) {
         16.
     } else {
@@ -40,38 +60,9 @@ pub(super) fn shell_content_width(page: Page, window: &Window) -> f32 {
         .max(0.)
 }
 
-pub(super) fn settings_sidebar_width(window: &Window) -> f32 {
-    let scale = f32::from(window.rem_size()) / 14.;
-    let width = f32::from(window.bounds().size.width) / scale;
-    (if width >= 1200. {
-        260.
-    } else if width >= 960. {
-        220.
-    } else if scale > 1.0 {
-        72.
-    } else {
-        64.
-    }) * scale
-}
-
-pub(super) fn settings_column_gap(window: &Window) -> f32 {
-    let scale = f32::from(window.rem_size()) / 14.;
-    let width = f32::from(window.bounds().size.width) / scale;
-    (if width >= 1200. {
-        40.
-    } else if width >= 960. {
-        24.
-    } else {
-        8.
-    }) * scale
-}
-
-/// Shared by settings panels and grids; use the same sidebar, gap and gutters.
+/// Settings use top-level tabs within the content pane, without a second sidebar.
 pub(super) fn settings_content_width(window: &Window) -> f32 {
-    (shell_content_width(Page::Settings, window)
-        - settings_sidebar_width(window)
-        - settings_column_gap(window))
-    .max(0.)
+    shell_content_width(Page::Settings, window)
 }
 
 /// Entrance motion replays when the notice text changes, not on every frame.
@@ -92,104 +83,149 @@ fn shell_column_at(width: AbsoluteLength) -> Div {
 }
 
 impl Desktop {
-    /// Keep task results reachable while the user is on another page.
-    fn shell_topbar(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
-        if self.page == Page::Settings {
-            return apply_shell_title_bar_chrome(TitleBar::new().h(px(28.)));
-        }
-        let tasks_need_attention = self.workspace.as_ref().is_some_and(|workspace| {
-            workspace.state.tasks.iter().any(|task| {
-                task.handled_by.is_none()
-                    && matches!(
+    /// Native window chrome stays small; destinations remain in the persistent sidebar.
+    fn shell_topbar(&self, _window: &mut Window, _cx: &mut Context<Self>) -> TitleBar {
+        apply_shell_title_bar_chrome(TitleBar::new().h(px(28.)))
+    }
+
+    fn shell_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let compact = sidebar_is_compact(window);
+        let navigation_scroll = window
+            .use_keyed_state("primary-navigation-scroll", cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
+        let settings_selected = self.page == Page::Settings;
+        let item = |id: &'static str, label: &'static str, icon: Icon, selected: bool| {
+            sidebar_action(id, label, icon, selected, compact, cx)
+        };
+        let courses = item(
+            "sidebar-courses",
+            course2md::tr!("全部课程"),
+            icons::book_open(),
+            matches!(self.page, Page::Library | Page::Result),
+        )
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.folder_filter = FolderFilter::All;
+            this.navigate(Page::Library, cx);
+        }));
+        let add = item(
+            "sidebar-add",
+            course2md::tr!("添加课程"),
+            icons::plus(),
+            self.page == Page::New,
+        )
+        .on_click(cx.listener(|this, _, window, cx| {
+            if this.prepare_workbench_input(window, cx) {
+                this.generation_options_open = true;
+                this.navigate(Page::New, cx);
+            }
+        }));
+        let task_count = self.workspace.as_ref().map_or(0, |workspace| {
+            crate::task_ui::actionable_task_count(&workspace.state.tasks)
+        });
+        let task_hint = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| {
+                workspace.state.tasks.iter().find(|task| {
+                    matches!(
                         task.state,
                         workspace::TaskState::NeedsAttention
                             | workspace::TaskState::Uncertain
                             | workspace::TaskState::Partial
                     )
+                })
             })
-        });
-        let task_count = self.workspace.as_ref().map_or(0, |workspace| {
-            crate::task_ui::actionable_task_count(&workspace.state.tasks)
-        });
-        // macOS draws the traffic lights inside the title bar's leading edge.
-        let leading = if cfg!(target_os = "macos") { 80. } else { 12. };
-        let page = self.page;
-        let brand = div()
-            .id("brand-home")
-            .flex()
-            .items_center()
-            .px(rems(6. / 14.))
-            .h(CONTROL_HEIGHT)
-            .rounded(RADIUS_PILL)
-            .cursor_pointer()
-            // A brand link, not a destination: no pill, so it never reads as selected.
-            .hover(|style| style.opacity(0.8))
-            .role(Role::Link)
-            .aria_label(course2md::tr!("course2md，生成笔记"))
-            .child(
-                div()
-                    .text_size(rems(24. / 14.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(color(INK))
-                    .child("course2md"),
-            )
-            .on_click(cx.listener(|this, _, window, cx| {
-                if this.prepare_workbench_input(window, cx) {
-                    this.navigate(Page::New, cx);
-                }
-            }));
-        let library = nav_action(
-            "nav-library",
-            matches!(page, Page::Library | Page::Result),
-            cx,
+            .map(crate::task_ui::task_attention_summary);
+        let tasks = item(
+            "sidebar-tasks",
+            course2md::tr!("任务"),
+            if task_hint.is_some() {
+                icons::warning()
+            } else {
+                icons::task()
+            },
+            self.page == Page::Task,
         )
-        .icon(icons::book_open())
-        .when(!is_compact(window), |button| {
-            button.label(course2md::tr!("笔记库"))
+        .when(!compact && task_count > 0, |button| {
+            button.child(div().text_size(TEXT_AUX).child(task_count.to_string()))
         })
-        .accessibility_label(course2md::tr!("笔记库"))
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.folder_filter = crate::FolderFilter::All;
-            this.navigate(Page::Library, cx);
-        }));
-        // Tasks stay reachable, but only claim space once there is work to show.
-        let tasks = (task_count > 0 || tasks_need_attention || page == Page::Task).then(|| {
-            nav_action("nav-tasks", page == Page::Task, cx)
-                .icon(if tasks_need_attention {
-                    icons::warning()
-                } else {
-                    icons::task()
-                })
-                .label(if task_count > 0 {
-                    course2md::tr!("任务 · {}", task_count)
-                } else {
-                    course2md::tr!("任务").to_owned()
-                })
-                .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Task, cx)))
-        });
-        let settings = nav_action("nav-settings", page == Page::Settings, cx)
-            .icon(if self.settings_have_problem() {
+        .when_some(task_hint, |button, hint| button.tooltip(hint))
+        .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Task, cx)));
+        let settings = item(
+            "sidebar-settings",
+            course2md::tr!("设置"),
+            if self.settings_have_problem() {
                 icons::warning()
             } else {
                 icons::settings()
-            })
-            .accessibility_label(course2md::tr!("设置"))
-            .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)));
-        apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window))).child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .h_full()
-                .pl(px(leading))
-                .pr(px(16.))
-                .gap(px(4.))
-                .items_center()
-                .child(brand)
-                .child(div().flex_1())
-                .child(library)
-                .children(tasks)
-                .child(settings),
+            },
+            settings_selected,
         )
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.open_settings(window, cx);
+        }));
+        v_flex()
+            .id("primary-sidebar")
+            .w(px(sidebar_width(window)))
+            .h_full()
+            .min_h_0()
+            .flex_shrink_0()
+            .p(px(12.))
+            .gap_2()
+            .bg(color(INSET))
+            .border_r_1()
+            .border_color(color(HAIRLINE))
+            .child(
+                h_flex()
+                    .min_h(px(48.))
+                    .flex_shrink_0()
+                    .items_center()
+                    .px_2()
+                    .when(compact, |view| view.child(icons::book_open().size_6()))
+                    .when(!compact, |view| {
+                        view.child(
+                            div()
+                                .text_size(TEXT_TITLE)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("course2md"),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        v_flex()
+                            .id("primary-navigation")
+                            .w_full()
+                            .h_full()
+                            .min_h_0()
+                            .gap_2()
+                            .overflow_y_scroll()
+                            .track_scroll(&navigation_scroll)
+                            .child(crate::focus_scroll::RevealFocus::new(
+                                "reveal-sidebar-courses",
+                                courses,
+                                navigation_scroll.clone(),
+                            ))
+                            .child(crate::focus_scroll::RevealFocus::new(
+                                "reveal-sidebar-add",
+                                add,
+                                navigation_scroll.clone(),
+                            ))
+                            .child(crate::focus_scroll::RevealFocus::new(
+                                "reveal-sidebar-tasks",
+                                tasks,
+                                navigation_scroll.clone(),
+                            )),
+                    )
+                    .child(crate::backend::vertical_scrollbar(&navigation_scroll)),
+            )
+            .child(settings)
     }
 
     fn task_result_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -305,7 +341,7 @@ impl Desktop {
     fn page_title(&self) -> String {
         match self.page {
             Page::New => course2md::tr!("生成笔记").into(),
-            Page::Library => course2md::tr!("笔记库").into(),
+            Page::Library => course2md::tr!("全部课程").into(),
             Page::Task => course2md::tr!("任务").into(),
             Page::Settings => course2md::tr!("设置").into(),
             Page::Result => self
@@ -344,7 +380,7 @@ impl Desktop {
                 .child(
                     primary_pill("library-new-note")
                         .icon(icons::plus())
-                        .label(course2md::tr!("新笔记"))
+                        .label(course2md::tr!("添加课程"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             if this.prepare_workbench_input(window, cx) {
                                 this.navigate(Page::New, cx);
@@ -352,7 +388,7 @@ impl Desktop {
                         })),
                 )
             });
-        v_flex().pt(px(40.)).pb(px(16.)).child(row)
+        v_flex().pt(px(24.)).pb(px(16.)).child(row)
     }
 }
 
@@ -373,22 +409,26 @@ impl Render for Desktop {
                         .bg(color(CANVAS))
                         .text_color(color(INK))
                         .text_size(TEXT_BODY)
-                        .child(
-                            TitleBar::new()
-                                .h(title_bar_height(window))
-                                .pl_0()
-                                .bg(color(CANVAS))
-                                .border_color(color(HAIRLINE))
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .justify_center()
-                                        .gap_2()
-                                        .items_center()
-                                        .child(icons::book_open().size_4().text_color(color(GRAY)))
-                                        .child("course2md"),
-                                ),
-                        )
+                        .when(!cfg!(target_os = "windows"), |view| {
+                            view.child(
+                                TitleBar::new()
+                                    .h(title_bar_height(window))
+                                    .pl_0()
+                                    .bg(color(CANVAS))
+                                    .border_color(color(HAIRLINE))
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .justify_center()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                icons::book_open().size_4().text_color(color(GRAY)),
+                                            )
+                                            .child("course2md"),
+                                    ),
+                            )
+                        })
                         .child(content),
                     window.has_active_dialog(cx),
                 ))
@@ -402,9 +442,9 @@ impl Render for Desktop {
             Page::Settings => self.settings_page(window, cx),
             Page::Result => self.reader_page(window, cx),
         };
-        // Task and library content virtualize their long lists: the list owns
-        // scrolling for the page instead of the shared page-scroll container.
-        let self_scrolling = matches!(self.page, Page::Task | Page::Library);
+        // The workbench owns its source and options panes. Never put both
+        // beneath a shared page scroll that can carry the source input away.
+        let self_scrolling = matches!(self.page, Page::New | Page::Task | Page::Library);
         let content = v_flex()
             .gap_4()
             .when(
@@ -432,10 +472,12 @@ impl Render for Desktop {
             )
             .child(content);
         let topbar = self.shell_topbar(window, cx);
+        let sidebar = self.shell_sidebar(window, cx);
         let task_notice = self.task_result_notice(cx);
         let model_notice = self.onboarding_background_notice(cx);
         let body = v_flex()
             .flex_1()
+            .h_full()
             .min_w_0()
             .min_h_0()
             .w_full()
@@ -557,8 +599,16 @@ impl Render for Desktop {
             .bg(color(CANVAS))
             .text_color(color(INK))
             .text_size(rems(1.))
-            .child(topbar)
-            .child(body);
+            .when(!cfg!(target_os = "windows"), |view| view.child(topbar))
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .items_stretch()
+                    .child(sidebar)
+                    .child(body),
+            );
         div()
             .id("desktop-action-root")
             .relative()

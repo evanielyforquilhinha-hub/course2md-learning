@@ -5,7 +5,7 @@ Retrieved 2026-09-08. `desktop/src/palettes.rs` contains the application mapping
 
 | Family | Upstream | Mapping |
 | --- | --- | --- |
-| Paper / Ink | course2md | Original neutral light/dark pair with blue actions. |
+| Paper / Ink | course2md | Original neutral light/dark pair with blue actions. The Apple-style desktop refinement uses neutral silver/charcoal surfaces, calmer selection tint and a single blue action accent. These are application colors, not copied Apple system tokens. |
 | Nord / Nord Snow | [Nord palette](https://www.nordtheme.com/docs/colors-and-palettes), [source](https://github.com/nordtheme/nord/blob/develop/src/nord.scss) | Nord uses Polar Night backgrounds, Snow Storm text and Frost accent. Nord Snow is this application's light adaptation, with light surfaces and darker status foregrounds. |
 | Tokyo Night / Day | [Tokyo Night](https://github.com/folke/tokyonight.nvim), [Night](https://github.com/folke/tokyonight.nvim/blob/main/extras/wezterm/tokyonight_night.toml), [Day](https://github.com/folke/tokyonight.nvim/blob/main/extras/wezterm/tokyonight_day.toml) | Retains the upstream backgrounds, blue accents and selection. Night retains its upstream text color; Day uses the application text-role adaptation below. Raised surfaces and some supporting/status text are also adapted for a document interface. |
 | Catppuccin | [Palette](https://github.com/catppuccin/palette/blob/main/palette.json) | Latte, Frappé, Macchiato and Mocha use their named text, base, mantle, crust, surface and blue colors. Dark canvas uses mantle and cards use base; Latte's raised surface and green/yellow foregrounds are adapted. |

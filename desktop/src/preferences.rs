@@ -18,6 +18,16 @@ pub type ServiceId = String;
 pub type ServiceVersionId = String;
 pub type ServiceDraftId = String;
 
+pub const MAX_STUDY_PROMPT_BYTES: usize = 128 * 1024;
+
+pub fn validate_study_prompt(prompt: &str) -> Result<()> {
+    ensure!(
+        !prompt.trim().is_empty() && prompt.len() <= MAX_STUDY_PROMPT_BYTES,
+        course2md::tr!("教学提示词不能为空，也不能超过 128 KiB。")
+    );
+    Ok(())
+}
+
 const SCHEMA: u32 = 1;
 
 fn new_id(prefix: &str) -> String {
@@ -132,6 +142,9 @@ pub struct GenerationPreferences {
     pub ai_summary: bool,
     pub vision: bool,
     pub prompt: Option<String>,
+    /// A custom default containing the complete 43 study-handout prompt.
+    /// Independent of the ordinary proofreading rule in `prompt`; None uses the standard template.
+    pub study_prompt: Option<String>,
     /// Durable editor text is not an active processing rule until explicitly applied.
     pub prompt_draft: Option<String>,
     pub local_model_draft: Option<String>,
@@ -156,6 +169,7 @@ impl Default for GenerationPreferences {
             ai_summary: false,
             vision: false,
             prompt: None,
+            study_prompt: None,
             prompt_draft: None,
             local_model_draft: None,
             last_local_provider: None,
@@ -356,7 +370,7 @@ impl ServiceProtocol {
             Self::SpeechChat => course2md::tr!("多模态对话（如 GPT-4o 音频）"),
             Self::AiChat => course2md::tr!("OpenAI 兼容服务"),
             Self::OllamaChat => course2md::tr!("Ollama 本地服务"),
-            Self::CodexResponses => course2md::tr!("OpenAI Codex 订阅"),
+            Self::CodexResponses => course2md::tr!("ChatGPT 订阅（Codex 通道）"),
         }
     }
 
@@ -614,6 +628,9 @@ impl ServiceVersion {
 pub struct ServiceRefs {
     pub asr: Option<ServiceVersionId>,
     pub llm: Option<ServiceVersionId>,
+    /// Current-task model choice; never changes the saved service version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_model: Option<String>,
 }
 
 impl ServiceRefs {
@@ -625,6 +642,9 @@ impl ServiceRefs {
             .flatten(),
             llm: (config.llm.enabled || config.llm.summarize)
                 .then(|| self.llm.clone())
+                .flatten(),
+            llm_model: (config.llm.enabled || config.llm.summarize)
+                .then(|| self.llm_model.clone())
                 .flatten(),
         }
     }
@@ -710,6 +730,9 @@ trait Validate {
 
 impl Validate for GenerationPreferences {
     fn validate_value(&self) -> Result<()> {
+        if let Some(prompt) = &self.study_prompt {
+            validate_study_prompt(prompt)?;
+        }
         if self.options.out.is_some() {
             bail!(course2md::tr!("保存位置由存储设置管理"));
         }
@@ -1727,7 +1750,14 @@ impl Store {
             } else {
                 version.config.endpoint.clone()
             };
-            config.llm.model = version.config.model.clone();
+            config.llm.model = required
+                .llm_model
+                .clone()
+                .unwrap_or_else(|| version.config.model.clone());
+            ensure!(
+                !config.llm.model.trim().is_empty(),
+                course2md::tr!("请填写模型 ID")
+            );
         }
         Ok(config)
     }
@@ -2162,6 +2192,41 @@ mod tests {
     }
 
     #[test]
+    fn study_prompt_roundtrips_without_changing_proofreading_rules() {
+        // An existing generation file has no study override and keeps its proofreading rule.
+        let old: GenerationPreferences = serde_json::from_value(serde_json::json!({
+            "prompt": "Keep technical terms unchanged."
+        }))
+        .unwrap();
+        assert_eq!(old.study_prompt, None);
+        assert_eq!(
+            old.prompt.as_deref(),
+            Some("Keep technical terms unchanged.")
+        );
+
+        let (directory, mut store) = isolated();
+        assert_eq!(store.generation().study_prompt, None);
+        let mut value = old;
+        value.study_prompt = Some("Explain each page in detail.\n保留公式与推导。".into());
+        store.save_generation(value.clone()).unwrap();
+        let reopened = Store::open(directory.path(), store.vault());
+        assert_eq!(reopened.generation().study_prompt, value.study_prompt);
+        assert_eq!(reopened.generation().prompt, value.prompt);
+    }
+
+    #[test]
+    fn study_prompt_rejects_empty_and_oversized_overrides_without_changing_saved_rules() {
+        let (_, mut store) = isolated();
+        let original = store.generation().clone();
+        for prompt in [" \n".to_owned(), "x".repeat(131_073)] {
+            let mut next = original.clone();
+            next.study_prompt = Some(prompt);
+            assert!(store.save_generation(next).is_err());
+            assert_eq!(store.generation(), &original);
+        }
+    }
+
+    #[test]
     fn local_engine_choice_survives_online_service_and_restart() {
         for provider in [
             None,
@@ -2278,6 +2343,7 @@ mod tests {
         let old_refs = ServiceRefs {
             llm: Some(old.id),
             asr: None,
+            llm_model: None,
         };
         let runtime = resolve_for_execution(&store, &config, &old_refs)
             .unwrap()
@@ -2286,6 +2352,42 @@ mod tests {
         assert_eq!(runtime.llm.api_key, "test-only-secret");
         let saved = store.config_for_refs(&config, &old_refs).unwrap();
         assert!(saved.llm.api_key.is_empty());
+    }
+
+    #[test]
+    fn per_task_ai_model_reaches_execution_without_editing_saved_service() {
+        let (_directory, mut store) = isolated();
+        let draft = complete_draft(&mut store, "saved-model");
+        let version = store
+            .publish_service(&draft.id, BindingScope::Defaults)
+            .unwrap();
+        let defaults = store.default_refs();
+        let mut config = ConfigFile::default();
+        config.llm.enabled = true;
+        let mut current = defaults.clone();
+        current.llm_model = Some("course-model".into());
+        let preview = store.config_for_preview(&config, &current).unwrap();
+        assert_eq!(preview.llm.model, "course-model");
+        let serialized = serde_json::to_string(&current).unwrap();
+        let restored: ServiceRefs = serde_json::from_str(&serialized).unwrap();
+        let runtime = resolve_for_execution(&store, &preview, &restored)
+            .unwrap()
+            .into_config();
+        assert_eq!(runtime.llm.model, "course-model");
+        assert_eq!(runtime.llm.api_key, "test-only-secret");
+        assert_eq!(
+            store.version(&version.id).unwrap().config.model,
+            "saved-model"
+        );
+        assert_eq!(store.default_refs(), defaults);
+        assert_eq!(
+            store.config_for_refs(&config, &defaults).unwrap().llm.model,
+            "saved-model"
+        );
+        current.llm_model = Some(" ".into());
+        assert!(store.config_for_refs(&config, &current).is_err());
+        config.llm.enabled = false;
+        assert!(store.config_for_refs(&config, &current).is_ok());
     }
 
     #[test]

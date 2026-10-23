@@ -83,6 +83,11 @@ pub(crate) struct State {
     tab_focus: [FocusHandle; SettingsTab::ALL.len()],
     inputs: BTreeMap<EditField, Entity<InputState>>,
     prompt: Entity<TextareaState>,
+    study_prompt: Entity<TextareaState>,
+    study_standard_prompt: Option<String>,
+    study_standard_error: Option<String>,
+    study_standard_loading: bool,
+    study_editor_error: Option<String>,
     editor: Option<ServiceEditor>,
     initialized: bool,
     show_prompt: bool,
@@ -140,6 +145,13 @@ impl State {
             );
         }
         let prompt = cx.new(|cx| TextareaState::new(window, cx).rows(6));
+        let study_prompt = cx.new(|cx| TextareaState::new(window, cx).rows(10));
+        subscriptions.push(cx.subscribe(&study_prompt, |this, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.settings_ui.study_editor_error = None;
+                cx.notify();
+            }
+        }));
         subscriptions.push(cx.subscribe(&prompt, |this, _, event, cx| match event {
             InputEvent::Change => this.save_prompt_draft(cx),
             InputEvent::Blur => this.flush_generation_text(cx),
@@ -150,6 +162,11 @@ impl State {
             tab_focus: std::array::from_fn(|_| cx.focus_handle()),
             inputs,
             prompt,
+            study_prompt,
+            study_standard_prompt: None,
+            study_standard_error: None,
+            study_standard_loading: false,
+            study_editor_error: None,
             editor: None,
             initialized: false,
             show_prompt: false,
@@ -199,7 +216,8 @@ fn setting_label(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Di
     div().child(
         text(id, value)
             .text_size(TEXT_SETTINGS_BODY)
-            .text_color(color(GRAY)),
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(color(INK)),
     )
 }
 
@@ -299,7 +317,7 @@ pub(super) fn settings_stacked_row(
             .w_full()
             .min_w_0()
             .gap_3()
-            .child(text(id.clone(), label).text_size(TEXT_SETTINGS_BODY))
+            .child(setting_label(id.clone(), label))
             .child(control)
             .when(!hint.is_empty(), |view| {
                 view.child(
@@ -354,7 +372,8 @@ pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, contr
                 .gap_1()
                 .child(
                     text(SharedString::from(format!("switch-label-{label}")), label)
-                        .text_size(TEXT_SETTINGS_BODY),
+                        .text_size(TEXT_SETTINGS_BODY)
+                        .font_weight(FontWeight::MEDIUM),
                 )
                 .when(!hint.is_empty(), |view| {
                     view.child(
@@ -479,20 +498,30 @@ impl AccountCard {
             .min_w_0()
             .gap(px(16.))
             .items_center()
-            .child(settings_resource_icon(self.icon))
+            .flex_wrap()
             .child(
-                v_flex()
+                h_flex()
                     .flex_1()
+                    .flex_basis(rems(260. / 14.))
+                    .max_w_full()
                     .min_w_0()
-                    .gap_1()
-                    .child(identity)
-                    .when_some(self.detail, |view, detail| {
-                        view.child(line("detail", detail, false))
-                    })
-                    .children(
-                        self.lines
-                            .into_iter()
-                            .map(|(suffix, message, error)| line(suffix, message, error)),
+                    .gap(px(16.))
+                    .items_start()
+                    .child(settings_resource_icon(self.icon))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(identity)
+                            .when_some(self.detail, |view, detail| {
+                                view.child(line("detail", detail, false))
+                            })
+                            .children(
+                                self.lines
+                                    .into_iter()
+                                    .map(|(suffix, message, error)| line(suffix, message, error)),
+                            ),
                     ),
             )
             .child(
@@ -591,14 +620,6 @@ impl SettingsTab {
             Self::Services => course2md::tr!("服务与账号"),
             Self::Storage => course2md::tr!("存储"),
             Self::Application => course2md::tr!("应用"),
-        }
-    }
-    /// The narrow rail has room for two characters.
-    fn short_label(self) -> &'static str {
-        match self {
-            Self::Generation => course2md::tr!("笔记"),
-            Self::Services => course2md::tr!("服务"),
-            other => other.label(),
         }
     }
     fn icon(self) -> Icon {
@@ -951,6 +972,13 @@ impl Desktop {
                 cx,
             )
         });
+        let study_prompt = value
+            .study_prompt
+            .or_else(|| self.settings_ui.study_standard_prompt.clone())
+            .unwrap_or_default();
+        self.settings_ui
+            .study_prompt
+            .update(cx, |input, cx| input.set_value(study_prompt, window, cx));
     }
     pub(crate) fn settings_have_problem(&self) -> bool {
         [
@@ -987,8 +1015,53 @@ impl Desktop {
     pub(crate) fn prepare_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_settings_tab_stops();
         self.hydrate_settings_inputs(window, cx);
+        self.ensure_settings_study_prompt(cx);
         self.ensure_settings_model_diagnostic(cx);
         self.ensure_account_cards(cx);
+    }
+
+    fn ensure_settings_study_prompt(&mut self, cx: &mut Context<Self>) {
+        if self.settings_tab != SettingsTab::Generation
+            || self.settings_ui.study_standard_loading
+            || self.settings_ui.study_standard_prompt.is_some()
+            || self.settings_ui.study_standard_error.is_some()
+        {
+            return;
+        }
+        let Some(handle) = cx.windows().first().copied() else {
+            return;
+        };
+        self.settings_ui.study_standard_loading = true;
+        let work = crate::spawn_blocking_io(crate::study_ui::standard_study_prompt);
+        cx.spawn(async move |this, cx| {
+            let result = work
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow!(crate::interrupted())));
+            let _ = cx.update_window(handle, |_, window, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    this.settings_ui.study_standard_loading = false;
+                    match result {
+                        Ok(standard) => {
+                            let selected = this
+                                .generation_edit_base()
+                                .study_prompt
+                                .unwrap_or_else(|| standard.clone());
+                            this.settings_ui.study_standard_prompt = Some(standard);
+                            this.settings_ui.study_standard_error = None;
+                            this.settings_ui
+                                .study_prompt
+                                .update(cx, |input, cx| input.set_value(selected, window, cx));
+                        }
+                        Err(error) => {
+                            this.settings_ui.study_standard_error = Some(error.to_string());
+                        }
+                    }
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
     }
 
     fn sync_settings_tab_stops(&mut self) {
@@ -1003,6 +1076,7 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) {
         self.settings_tab = tab;
+        self.ensure_settings_study_prompt(cx);
         self.sync_settings_tab_stops();
         self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
         self.settings_ui.tab_focus[tab.index()].focus(window, cx);
@@ -1023,14 +1097,18 @@ impl Desktop {
         }
     }
 
-    fn settings_navigation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let rail = is_compact(window);
-        let mut navigation = v_flex()
+    fn settings_navigation(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        // Categories belong above the form. Wrapping uses the controls' actual
+        // measured widths, so enlarged text keeps full labels instead of a second rail.
+        let mut navigation = h_flex()
             .id("settings-navigation")
+            .role(Role::TabList)
             .key_context("SettingsTabs")
-            .w(px(crate::views::settings_sidebar_width(window)))
+            .w_full()
+            .min_w_0()
             .flex_shrink_0()
-            .gap(px(8.))
+            .flex_wrap()
+            .gap(rems(8. / 14.))
             .on_action(cx.listener(|this, _: &NextSettingsTab, window, cx| {
                 this.select_settings_tab(this.settings_tab.offset(1), window, cx);
             }))
@@ -1050,47 +1128,35 @@ impl Desktop {
         for tab in SettingsTab::ALL {
             let index = tab.index();
             let selected = self.settings_tab == tab;
-            let icon = div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .h(px(32.))
-                .w(px(if rail { 56. } else { 24. }))
-                .rounded_full()
-                .when(selected && rail, |view| view.bg(color(SECONDARY_CONTAINER)))
-                .child(tab.icon().size(px(22.)));
-            let label = if rail { tab.short_label() } else { tab.label() };
             navigation = navigation.child(
                 gpui_base::Tab::new(("settings-tab", index))
                     .selected(selected)
                     .track_focus(&self.settings_ui.tab_focus[index].clone().tab_stop(selected))
                     .accessibility_label(tab.label())
-                    .w_full()
+                    .min_w_0()
+                    .max_w_full()
+                    .flex_shrink_0()
                     .h_auto()
-                    .min_h(px(56.))
-                    .rounded_full()
-                    .px(px(if rail { 0. } else { 16. }))
-                    .py(px(8.))
+                    .min_h(CONTROL_HEIGHT)
+                    .rounded(RADIUS_NAV)
+                    .px(rems(14. / 14.))
+                    .py(rems(8. / 14.))
                     .bg(gpui::transparent_black())
-                    .when(selected && !rail, |tab| tab.bg(color(SECONDARY_CONTAINER)))
+                    .when(selected, |tab| tab.bg(color(SURFACE)).shadow(shadow_card()))
                     .child(
-                        div()
-                            .flex()
-                            .w_full()
+                        h_flex()
+                            .min_w_0()
                             .items_center()
-                            .gap(px(if rail { 4. } else { 12. }))
-                            .when(rail, |view| view.flex_col())
-                            .child(icon)
+                            .gap(ICON_GAP)
+                            .child(tab.icon().size(ICON_SLOT).flex_shrink_0())
                             .child(
                                 div()
-                                    .when(rail, |label| label.w_full().text_center())
+                                    .min_w_0()
                                     .whitespace_normal()
-                                    .text_size(if rail {
-                                        theme::TEXT_AUX
-                                    } else {
-                                        theme::TEXT_BODY
-                                    })
-                                    .child(label),
+                                    .text_size(TEXT_BODY)
+                                    .line_height(rems(20. / 14.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(tab.label()),
                             ),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -1105,9 +1171,6 @@ impl Desktop {
         // 渲染不得有副作用：hydrate/诊断检查都在 open_settings、
         // select_settings_tab、restore_settings_group 等事件入口完成
         let content_width = crate::views::settings_content_width(window);
-        let layout_width = content_width
-            + crate::views::settings_sidebar_width(window)
-            + crate::views::settings_column_gap(window);
         let header = h_flex()
             .w_full()
             .min_w_0()
@@ -1127,12 +1190,18 @@ impl Desktop {
                         let destination = this.settings_origin.take().unwrap_or(Page::New);
                         let focus = this.settings_return_focus.take();
                         this.navigate(destination, cx);
+                        if destination == Page::New {
+                            this.sync_proofread_editor(window, cx);
+                        }
                         if let Some(focus) = focus {
                             window.on_next_frame(move |window, cx| focus.focus(window, cx));
                         }
                     })),
             )
-            .child(text("settings-page-title", course2md::tr!("设置")).text_size(rems(22. / 14.)));
+            .child(theme::page_heading(
+                "settings-page-title",
+                course2md::tr!("设置"),
+            ));
 
         let navigation = self.settings_navigation(window, cx);
         let mut panel = v_flex()
@@ -1143,7 +1212,7 @@ impl Desktop {
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .w(px(content_width))
+            .w_full()
             .gap(px(24.));
         for group in [
             PreferenceGroup::Generation,
@@ -1236,11 +1305,21 @@ impl Desktop {
                             .min_w_0()
                             .when(editing_service, |view| view.h_full().min_h_0())
                             .when(!editing_service, |view| view.pb(px(24.)))
-                            .child(v_flex().w_full().min_w_0().gap(px(22.))
-                                .child(v_flex().gap_2()
-                                    .child(theme::page_heading("settings-category-heading", self.settings_tab.label()))
-                                    .when(self.settings_tab == SettingsTab::Generation, |view| view.child(text("generation-default-explanation", course2md::tr!("这里是长期默认值，主页的「处理选项」可以只对单次生效")).text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))))
-                                .child(content)),
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .gap(px(22.))
+                                    .when(editing_service, |view| view.h_full().min_h_0())
+                                    .when(self.settings_tab == SettingsTab::Generation, |view| {
+                                        view.child(
+                                            text("generation-default-explanation", course2md::tr!("这里设置默认值，「添加课程」中的处理选项只对本次生效"))
+                                                .text_size(TEXT_SETTINGS_AUX)
+                                                .text_color(color(GRAY)),
+                                        )
+                                    })
+                                    .child(content),
+                            ),
                     ),
             )
             .when(!editing_service, |panel| {
@@ -1248,25 +1327,15 @@ impl Desktop {
                     crate::backend::vertical_scrollbar(&self.scrolls[Page::Settings as usize]),
                 )
             });
-        // Wide references reserve 56 px after the content; center that complete
-        // box so the navigation and panel share the same left ruler.
-        let wide_trailing_space = if f32::from(window.viewport_size().width) >= 1200. {
-            56.
-        } else {
-            0.
-        };
-        let body = div()
-            .max_w(px(layout_width + wide_trailing_space))
-            .pr(px(wide_trailing_space))
+        let body = v_flex()
+            .max_w(px(content_width))
             .mx_auto()
-            .flex()
             .w_full()
             .min_w_0()
             .min_h_0()
             .flex_1()
-            .flex_row()
             .items_stretch()
-            .gap(px(crate::views::settings_column_gap(window)))
+            .gap(rems(16. / 14.))
             .child(navigation)
             .child(panel);
         v_flex()
@@ -1274,7 +1343,7 @@ impl Desktop {
             .h_full()
             .min_w_0()
             .min_h_0()
-            .pt(px(16.))
+            .pt(px(24.))
             .gap(px(24.))
             .child(header)
             .child(body)
@@ -1425,6 +1494,7 @@ impl Desktop {
         .and_then(|id| self.preferences.version(id))
         .filter(|default| default.service_id == version.service_id);
         let outdated_default = default_version.filter(|default| default.id != version.id);
+        let another_service_is_default = default_version.is_none();
         let default_description = default_version
             .map(|default| {
                 if default.id == version.id {
@@ -1487,7 +1557,17 @@ impl Desktop {
         let failures: Vec<_> = tests
             .iter()
             .filter(|(_, evidence)| evidence.outcome != preferences::TestOutcome::Passed)
-            .map(|(kind, evidence)| course2md::tr!("{}：{}", kind.label(), evidence.message))
+            .map(|(kind, evidence)| {
+                let tone = match evidence.outcome {
+                    preferences::TestOutcome::OutcomeUnknown => WARNING,
+                    preferences::TestOutcome::NotSent => GRAY,
+                    _ => DANGER,
+                };
+                (
+                    course2md::tr!("{}：{}", kind.label(), evidence.message),
+                    tone,
+                )
+            })
             .collect();
         let host = version.config.host();
         let description = if host.is_empty() || version.config.name.trim() == host {
@@ -1498,10 +1578,11 @@ impl Desktop {
         let edit_id = id.clone();
         let test_id = id.clone();
         let default_id = id.clone();
+        let choose_default_id = id.clone();
         setting_surface()
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap(ICON_GAP)
                     .items_center()
                     .flex_wrap()
                     .child(
@@ -1510,7 +1591,7 @@ impl Desktop {
                         } else {
                             icons::science()
                         })
-                        .size(px(20.))
+                        .size(ICON_SLOT)
                         .text_color(color(ACCENT))
                         .flex_shrink_0(),
                     )
@@ -1572,11 +1653,14 @@ impl Desktop {
                     description,
                 )
                 .text_size(TEXT_SETTINGS_AUX)
+                .pl(LABEL_INSET)
+                .whitespace_normal()
                 .text_color(color(GRAY)),
             )
             .when_some(outdated_default, |card, default| {
                 card.child(
                     h_flex()
+                        .pl(LABEL_INSET)
                         .w_full()
                         .min_w_0()
                         .gap_2()
@@ -1607,7 +1691,25 @@ impl Desktop {
                         ),
                 )
             })
-            .child(h_flex().gap_2().flex_wrap().children(status_badges))
+            .when(another_service_is_default, |card| {
+                card.child(
+                    quiet(SharedString::from(format!("choose-default-service-{id}")))
+                        .settings_text()
+                        .icon(icons::check_circle())
+                        .label(course2md::tr!("设为以后默认…"))
+                        .ml(LABEL_INSET)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.confirm_default_service(choose_default_id.clone(), window, cx);
+                        })),
+                )
+            })
+            .child(
+                h_flex()
+                    .pl(LABEL_INSET)
+                    .gap_2()
+                    .flex_wrap()
+                    .children(status_badges),
+            )
             .when_some(latest_test, |card, latest_test| {
                 card.child(
                     text(
@@ -1615,17 +1717,29 @@ impl Desktop {
                         latest_test,
                     )
                     .text_size(TEXT_SETTINGS_AUX)
+                    .pl(LABEL_INSET)
+                    .whitespace_normal()
                     .text_color(color(GRAY)),
                 )
             })
             .when(!failures.is_empty(), |card| {
                 card.child(
-                    text(
-                        SharedString::from(format!("saved-service-test-status-{id}")),
-                        failures.join("\n"),
-                    )
-                    .text_size(TEXT_SETTINGS_AUX)
-                    .text_color(color(GRAY)),
+                    v_flex().pl(LABEL_INSET).gap_1().children(
+                        failures
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, (message, tone))| {
+                                text(
+                                    SharedString::from(format!(
+                                        "saved-service-test-status-{id}-{index}"
+                                    )),
+                                    message,
+                                )
+                                .text_size(TEXT_SETTINGS_AUX)
+                                .whitespace_normal()
+                                .text_color(color(tone))
+                            }),
+                    ),
                 )
             })
     }
@@ -1679,6 +1793,35 @@ impl Desktop {
         }
         next.prompt_draft = Some(text);
         self.stage_generation_text(next, cx);
+    }
+    fn apply_study_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(standard) = self.settings_ui.study_standard_prompt.as_ref() else {
+            return;
+        };
+        let prompt = self.settings_ui.study_prompt.read(cx).value().to_string();
+        if let Err(error) = preferences::validate_study_prompt(&prompt) {
+            self.settings_ui.study_editor_error = Some(error.to_string());
+            cx.notify();
+            return;
+        }
+        let mut next = self.generation_edit_base();
+        next.study_prompt = (prompt != *standard).then_some(prompt);
+        if self.commit_generation(next, cx) {
+            self.settings_ui.study_editor_error = None;
+        }
+    }
+    fn restore_study_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(standard) = self.settings_ui.study_standard_prompt.clone() else {
+            return;
+        };
+        let mut next = self.generation_edit_base();
+        next.study_prompt = None;
+        if self.commit_generation(next, cx) {
+            self.settings_ui
+                .study_prompt
+                .update(cx, |input, cx| input.set_value(standard, window, cx));
+            self.settings_ui.study_editor_error = None;
+        }
     }
     fn stage_generation_text(&mut self, next: GenerationPreferences, cx: &mut Context<Self>) {
         self.settings_ui.unsaved_text = Some(next);

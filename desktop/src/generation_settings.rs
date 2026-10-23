@@ -4,6 +4,7 @@ use super::model_diagnostics::{
     unsupported_model,
 };
 use super::*;
+use crate::import_ui::{ConversionAiOption, conversion_ai_option_hint, conversion_ai_status};
 
 const SUBTITLE_LANGUAGES: [(&str, &str); 5] = [
     ("", "自动"),
@@ -319,45 +320,69 @@ impl Desktop {
                 model_panel,
             ));
         }
-        let mut ai = group("ai-default-settings", course2md::tr!("AI 处理"))
-            .child(
-                setting_surface()
-                    .child(settings_switch_row(
-                        course2md::tr!("校对文字和标点"),
-                        "",
-                        Switch::new("default-ai-proofread")
-                            .checked(value.ai_proofread)
-                            .on_click(cx.listener(|this, enabled, _, cx| {
-                                let mut next = this.generation_edit_base();
-                                next.ai_proofread = *enabled;
-                                this.commit_generation(next, cx);
-                            })),
-                    ))
-                    .child(settings_switch_row(
-                        course2md::tr!("在开头生成摘要"),
-                        "",
-                        Switch::new("default-ai-summary")
-                            .checked(value.ai_summary)
-                            .on_click(cx.listener(|this, enabled, _, cx| {
-                                let mut next = this.generation_edit_base();
-                                next.ai_summary = *enabled;
-                                this.commit_generation(next, cx);
-                            })),
-                    ))
-                    .child(settings_switch_row(
-                        course2md::tr!("校对时附带对应截图"),
-                        "",
-                        Switch::new("default-ai-vision")
-                            .checked(value.vision)
-                            .disabled(!value.ai_proofread)
-                            .on_click(cx.listener(|this, enabled, _, cx| {
-                                let mut next = this.generation_edit_base();
-                                next.vision = *enabled;
-                                this.commit_generation(next, cx);
-                            })),
-                    )),
-            )
-            .child(self.service_picker(ServicePurpose::Ai, false, cx));
+        let mut ai = group("ai-default-settings", course2md::tr!("字幕校对与摘要")).child(
+            setting_surface()
+                .child(settings_switch_row(
+                    course2md::tr!("校对文字和标点"),
+                    conversion_ai_option_hint(ConversionAiOption::Proofread, value.ai_proofread),
+                    Switch::new("default-ai-proofread")
+                        .checked(value.ai_proofread)
+                        .on_click(cx.listener(|this, enabled, _, cx| {
+                            let mut next = this.generation_edit_base();
+                            next.ai_proofread = *enabled;
+                            this.commit_generation(next, cx);
+                        })),
+                ))
+                .child(settings_switch_row(
+                    course2md::tr!("在开头生成摘要"),
+                    conversion_ai_option_hint(ConversionAiOption::Summary, value.ai_proofread),
+                    Switch::new("default-ai-summary")
+                        .checked(value.ai_summary)
+                        .on_click(cx.listener(|this, enabled, _, cx| {
+                            let mut next = this.generation_edit_base();
+                            next.ai_summary = *enabled;
+                            this.commit_generation(next, cx);
+                        })),
+                ))
+                .child(settings_switch_row(
+                    course2md::tr!("校对时附带对应截图"),
+                    conversion_ai_option_hint(ConversionAiOption::Vision, value.ai_proofread),
+                    Switch::new("default-ai-vision")
+                        .checked(value.vision)
+                        .disabled(!value.ai_proofread)
+                        .on_click(cx.listener(|this, enabled, _, cx| {
+                            let mut next = this.generation_edit_base();
+                            next.vision = *enabled;
+                            this.commit_generation(next, cx);
+                        })),
+                ))
+                .child(
+                    text(
+                        "default-ai-active-state",
+                        conversion_ai_status(value.ai_proofread, value.ai_summary),
+                    )
+                    .text_size(TEXT_SETTINGS_AUX)
+                    .text_color(color(GRAY)),
+                )
+                .child(
+                    text(
+                        "default-ai-apply-scope",
+                        course2md::tr!("这些默认设置用于新任务；已提交的任务保留原有选项和模型。"),
+                    )
+                    .text_size(TEXT_SETTINGS_AUX)
+                    .text_color(color(GRAY)),
+                )
+                .child(
+                    text(
+                        "default-ai-teaching-entry",
+                        course2md::tr!(
+                            "服务与模型在「服务与账号」中配置，添加课程时选择本次使用的服务。"
+                        ),
+                    )
+                    .text_size(TEXT_SETTINGS_AUX)
+                    .text_color(color(GRAY)),
+                ),
+        );
         // The rule only applies to proofreading, so it appears with it.
         if value.ai_proofread {
             ai = ai
@@ -454,15 +479,98 @@ impl Desktop {
                         ),
                 ));
         }
+        let study_prompt = group("study-prompt-defaults", course2md::tr!("AI 学习讲义")).child(
+            settings_stacked_row(
+                "default-study-prompt-label",
+                course2md::tr!("默认教学提示词"),
+                course2md::tr!("用于以后新课程的 AI 学习讲义；校对规则和已提交任务不受影响。"),
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_3()
+                    .when(self.settings_ui.study_standard_prompt.is_some(), |view| {
+                        view.child(
+                            Textarea::new(&self.settings_ui.study_prompt)
+                                .h(px(240.))
+                                .w_full()
+                                .aria_label(course2md::tr!("默认教学提示词")),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .flex_wrap()
+                                .child(
+                                    outline_pill("apply-study-prompt")
+                                        .settings_text()
+                                        .icon(icons::save())
+                                        .label(course2md::tr!("应用教学提示词"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.apply_study_prompt(cx)
+                                        })),
+                                )
+                                .child(
+                                    quiet("restore-study-prompt")
+                                        .settings_text()
+                                        .icon(icons::refresh())
+                                        .label(course2md::tr!("恢复标准教学提示词"))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.restore_study_prompt(window, cx)
+                                        })),
+                                ),
+                        )
+                    })
+                    .when(self.settings_ui.study_standard_loading, |view| {
+                        view.child(
+                            text(
+                                "study-prompt-loading",
+                                course2md::tr!("正在读取标准教学提示词…"),
+                            )
+                            .text_size(TEXT_SETTINGS_AUX)
+                            .text_color(color(GRAY)),
+                        )
+                    })
+                    .when_some(
+                        self.settings_ui.study_standard_error.as_ref(),
+                        |view, error| {
+                            view.child(
+                                text("study-prompt-load-error", error.clone())
+                                    .text_size(TEXT_SETTINGS_AUX)
+                                    .text_color(color(DANGER)),
+                            )
+                            .child(
+                                quiet("retry-study-prompt")
+                                    .settings_text()
+                                    .icon(icons::refresh())
+                                    .label(course2md::tr!("重新读取"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.settings_ui.study_standard_error = None;
+                                        this.ensure_settings_study_prompt(cx);
+                                    })),
+                            )
+                        },
+                    )
+                    .when_some(
+                        self.settings_ui.study_editor_error.as_ref(),
+                        |view, error| {
+                            view.child(
+                                text("study-prompt-validation-error", error.clone())
+                                    .text_size(TEXT_SETTINGS_AUX)
+                                    .text_color(color(DANGER)),
+                            )
+                        },
+                    ),
+            ),
+        );
         let selected = value.options.formats.clone().unwrap_or_default();
         v_flex()
             .w_full()
             .min_w_0()
             .flex_shrink_0()
             .gap(px(32.))
+            .child(ai)
+            .child(study_prompt)
             .child(languages)
             .child(recognition)
-            .child(ai)
             .child(
                 group("export-default-settings", course2md::tr!("保存与导出"))
                     .child(

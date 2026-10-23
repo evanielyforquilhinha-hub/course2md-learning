@@ -136,6 +136,52 @@ fn codex_content(user: Value) -> Value {
     Value::Array(parts)
 }
 
+/// Adapt a validated conversation without losing draft/review turns.
+pub(crate) fn conversation_body(
+    s: &LlmSettings,
+    messages: &[Value],
+    max_tokens: u32,
+) -> Result<Value> {
+    if s.provider != LlmProvider::Codex {
+        return Ok(serde_json::json!({
+            "model": s.model, "messages": messages, "max_tokens": max_tokens,
+            "temperature": 0.2, "response_format": {"type":"json_object"},
+        }));
+    }
+    let mut instructions = Vec::new();
+    let mut input = Vec::new();
+    for message in messages {
+        let role = message["role"].as_str().unwrap_or_default();
+        if matches!(role, "system" | "developer") {
+            if let Some(text) = message["content"].as_str() {
+                instructions.push(text.to_string());
+            } else if let Some(parts) = message["content"].as_array() {
+                instructions.extend(
+                    parts
+                        .iter()
+                        .filter_map(|p| p["text"].as_str().map(str::to_string)),
+                );
+            }
+            continue;
+        }
+        let mut content = codex_content(message["content"].clone());
+        if role == "assistant" {
+            for part in content.as_array_mut().into_iter().flatten() {
+                if part["type"] == "input_text" {
+                    part["type"] = "output_text".into();
+                }
+            }
+        } else {
+            ensure_json_marker(&mut content);
+        }
+        input.push(serde_json::json!({"type":"message", "role":role, "content":content}));
+    }
+    Ok(serde_json::json!({
+        "model":s.model, "instructions":instructions.join("\n\n"), "input":input,
+        "store":false, "stream":true, "text":{"format":{"type":"json_object"}},
+    }))
+}
+
 fn structured_format_key(s: &LlmSettings) -> &'static str {
     match s.provider {
         LlmProvider::Codex => "text",
@@ -164,6 +210,8 @@ pub(crate) fn sse_to_chat_json(bytes: &[u8]) -> Result<Value> {
     let mut out = String::new();
     let mut completed = false;
     let mut usage = serde_json::Value::Null;
+    let mut model = Value::Null;
+    let mut id = Value::Null;
     let mut failed: Option<String> = None;
     for line in text.lines() {
         let Some(data) = line.strip_prefix("data:") else {
@@ -182,6 +230,8 @@ pub(crate) fn sse_to_chat_json(bytes: &[u8]) -> Result<Value> {
             }
             Some("response.completed") => {
                 completed = true;
+                model = event["response"]["model"].clone();
+                id = event["response"]["id"].clone();
                 let u = &event["response"]["usage"];
                 if let (Some(input), Some(output)) =
                     (u["input_tokens"].as_u64(), u["output_tokens"].as_u64())
@@ -189,6 +239,7 @@ pub(crate) fn sse_to_chat_json(bytes: &[u8]) -> Result<Value> {
                     usage = serde_json::json!({
                         "prompt_tokens": input,
                         "completion_tokens": output,
+                        "total_tokens": input + output,
                     });
                 }
             }
@@ -216,12 +267,36 @@ pub(crate) fn sse_to_chat_json(bytes: &[u8]) -> Result<Value> {
         !out.trim().is_empty(),
         crate::tr!("AI 服务响应缺少正文 / AI response is missing text")
     );
-    Ok(serde_json::json!({"choices": [{"message": {"content": out}}], "usage": usage}))
+    Ok(
+        serde_json::json!({"id":id,"model":model,"choices": [{"finish_reason":"stop","message": {"role":"assistant","content": out}}], "usage": usage}),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_preserves_codex_assistant_history_and_images() {
+        let s = settings(LlmProvider::Codex);
+        let messages = serde_json::json!([
+            {"role":"system","content":"teach json"},
+            {"role":"user","content":[{"type":"text","text":"evidence"},{"type":"image_url","image_url":{"url":"data:image/png;base64,eA=="}}]},
+            {"role":"assistant","content":"draft"},
+            {"role":"user","content":"review"}
+        ]);
+        let body = conversation_body(&s, messages.as_array().unwrap(), 16384).unwrap();
+        assert_eq!(body["input"][1]["role"], "assistant");
+        assert_eq!(body["input"][1]["content"][0]["type"], "output_text");
+        assert_eq!(body["input"][1]["content"][0]["text"], "draft");
+        assert_eq!(
+            body["input"][0]["content"][1]["image_url"],
+            "data:image/png;base64,eA=="
+        );
+        assert!(body.get("enable_thinking").is_none());
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("max_tokens").is_none());
+    }
 
     fn settings(provider: LlmProvider) -> LlmSettings {
         LlmSettings {

@@ -189,13 +189,13 @@ impl Desktop {
                     Ok(catalog) => {
                         this.codex.status = Some(LoginStatus::Connected);
                         if catalog.catalog_is_fallback {
-                            this.codex.inform(course2md::tr!("模型目录暂不可用，已使用默认模型").into());
+                            let message = course2md::tr!("账号已连接，但模型目录获取失败；已保留当前模型，请重试获取。").to_string();
+                            this.codex.fail(message.clone());
+                            this.codex_form_models_failed(surface, message);
                         } else {
                             this.codex.notice = None;
+                            this.codex_apply_catalog(surface, catalog.models, cx);
                         }
-                        this.codex_apply_catalog(surface, catalog.models, cx);
-                        // 重读登录状态，展示账号详情而非通用占位
-                        this.codex_refresh_status(surface, cx);
                     }
                     Err(error) => {
                         let message = if login_required(&error) {
@@ -381,7 +381,10 @@ impl Desktop {
         let authorizing = working == Some(CodexWork::Authorizing);
         let mut lines = vec![(
             "policy",
-            course2md::tr!("使用你的 ChatGPT 订阅").to_owned(),
+            crate::settings_ui::service_form::ai_service_billing_hint(
+                ServiceProtocol::CodexResponses,
+            )
+            .to_owned(),
             false,
         )];
         if authorizing {
@@ -393,6 +396,13 @@ impl Desktop {
         }
         lines.extend(notice.map(|(message, is_error)| ("notice", message, is_error)));
         let mut actions = Vec::new();
+        if connected && surface == CodexSurface::Settings {
+            lines.push((
+                "service-selection",
+                course2md::tr!("账号连接后，选择模型并保存服务，即可在每个视频中选用。").into(),
+                false,
+            ));
+        }
         if authorizing {
             actions.push(
                 quiet(SharedString::from(format!("{id}-cancel-authorize")))
@@ -415,7 +425,7 @@ impl Desktop {
         crate::settings_ui::AccountCard {
             id,
             icon: icons::sparkles(),
-            title: course2md::tr!("Codex 账号"),
+            title: course2md::tr!("ChatGPT 订阅（Codex 通道）"),
             status: (kind, label),
             detail,
             busy,
@@ -460,8 +470,8 @@ impl Desktop {
                     buttons
                 }
             } else {
-                // 与 Bilibili 账号同序：重新检查在前、退出登录在后
-                vec![
+                // The saved-service action is available only on the standalone account card.
+                let mut buttons = vec![
                     quiet(SharedString::from(format!("{id}-recheck")))
                         .when(
                             surface == CodexSurface::Settings,
@@ -486,7 +496,25 @@ impl Desktop {
                         .disabled(disabled || busy)
                         .on_click(cx.listener(move |this, _, _, cx| this.codex_logout(surface, cx)))
                         .into_any_element(),
-                ]
+                ];
+                if surface == CodexSurface::Settings {
+                    buttons.insert(
+                        0,
+                        quiet(SharedString::from(format!("{id}-service-model")))
+                            .when(
+                                surface == CodexSurface::Settings,
+                                SettingsText::settings_text,
+                            )
+                            .icon(icons::tune())
+                            .label(course2md::tr!("选择模型并保存服务"))
+                            .disabled(disabled || busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_codex_service_editor(window, cx);
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                buttons
             },
         }
         .render(cx)

@@ -97,6 +97,17 @@ pub enum Override {
     Formats,
 }
 
+/// Course-specific teaching choice. Service and model identify a configured
+/// provider; credentials remain in the credential vault.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct StudyPlan {
+    pub enabled: bool,
+    pub prompt: String,
+    pub service: Option<String>,
+    pub model: Option<String>,
+}
+
 /// The single current input form. Its serialized type/field names are retained
 /// so existing workspaces can be upgraded without changing task records.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -125,6 +136,10 @@ pub struct Draft {
     pub asr_service: Option<String>,
     #[serde(default)]
     pub ai_service: Option<String>,
+    #[serde(default)]
+    pub ai_model: Option<String>,
+    #[serde(default)]
+    pub study: StudyPlan,
     #[serde(default)]
     pub retry_of: Option<String>,
     #[serde(default, serialize_with = "serialize_optional_public_config")]
@@ -156,6 +171,8 @@ impl Draft {
             subtitle: None,
             asr_service: None,
             ai_service: None,
+            ai_model: None,
+            study: StudyPlan::default(),
             retry_of: None,
             base_config: None,
             submitted_task: None,
@@ -272,6 +289,8 @@ pub struct TaskPlan {
     pub config: ConfigFile,
     pub asr_service: Option<String>,
     pub ai_service: Option<String>,
+    #[serde(default)]
+    pub study: StudyPlan,
 }
 
 impl TaskPlan {
@@ -294,7 +313,10 @@ impl TaskPlan {
         right.defaults.out = None;
         left.desktop = Default::default();
         right.desktop = Default::default();
-        left == right && self.options == other.options
+        left == right
+            && self.options == other.options
+            && self.study.enabled == other.study.enabled
+            && (!self.study.enabled || self.study == other.study)
     }
 }
 
@@ -312,6 +334,26 @@ pub enum TaskState {
     Complete,
     Partial,
     Cancelled,
+}
+
+/// Durable result of the optional teaching phase. An interrupted remote call
+/// is uncertain until the user explicitly decides whether to retry it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum StudyProgress {
+    #[default]
+    NotRequested,
+    Pending,
+    Running,
+    Complete {
+        output: PathBuf,
+    },
+    Failed {
+        error: String,
+    },
+    Uncertain {
+        error: String,
+    },
 }
 
 impl TaskState {
@@ -355,6 +397,10 @@ pub struct TaskRecord {
     pub id: String,
     pub plan: TaskPlan,
     pub state: TaskState,
+    #[serde(default)]
+    pub study: StudyProgress,
+    #[serde(default)]
+    pub study_meter: Option<crate::study_progress::Meter>,
     pub intent: Intent,
     pub created: u64,
     pub updated: u64,
@@ -576,6 +622,19 @@ impl State {
     pub fn task_mut(&mut self, id: &str) -> Option<&mut TaskRecord> {
         self.tasks.iter_mut().find(|t| t.id == id)
     }
+    /// A lecture belongs to one published note version, not merely its title
+    /// or source video. This lookup deliberately performs no filesystem IO.
+    pub fn study_output_for(&self, version: &Path) -> Option<&Path> {
+        self.tasks
+            .iter()
+            .filter(|task| task.artifact.as_deref() == Some(version))
+            .filter_map(|task| match &task.study {
+                StudyProgress::Complete { output } => Some((task.updated, output.as_path())),
+                _ => None,
+            })
+            .max_by_key(|(updated, _)| *updated)
+            .map(|(_, output)| output)
+    }
     pub fn next_task(&self) -> Option<&TaskRecord> {
         self.tasks.iter().find(|t| {
             t.state == TaskState::Queued && t.intent == Intent::Run && t.handled_by.is_none()
@@ -625,6 +684,8 @@ impl State {
         input.overrides = previous.overrides.clone();
         input.asr_service = previous.asr_service.clone();
         input.ai_service = previous.ai_service.clone();
+        input.ai_model = previous.ai_model.clone();
+        input.study = previous.study.clone();
         input.base_config = previous.base_config.clone();
         input.local_provider = previous.local_provider;
         self.replace_input(input);
@@ -697,6 +758,9 @@ impl State {
         draft.subtitle = task.plan.subtitle;
         draft.asr_service = task.plan.asr_service;
         draft.ai_service = task.plan.ai_service;
+        draft.ai_model =
+            (!task.plan.config.llm.model.is_empty()).then(|| task.plan.config.llm.model.clone());
+        draft.study = task.plan.study;
         draft.retry_of = Some(id.to_owned());
         draft.overrides = [
             Override::Provider,
@@ -749,10 +813,17 @@ impl State {
         let id = new_id("task");
         let work_dir = location.root.join(".course2md/work").join(&id);
         let now = now();
+        let study = if plan.study.enabled {
+            StudyProgress::Pending
+        } else {
+            StudyProgress::NotRequested
+        };
         self.tasks.push(TaskRecord {
             id: id.clone(),
             plan,
             state: TaskState::Queued,
+            study,
+            study_meter: None,
             intent: Intent::Run,
             created: now,
             updated: now,
@@ -798,6 +869,12 @@ impl State {
             }
         }
         for task in &mut self.tasks {
+            if task.study == StudyProgress::Running {
+                task.study = StudyProgress::Uncertain {
+                    error: course2md::tr!("结果尚未确认").into(),
+                };
+                task.updated = now();
+            }
             if task.handled_by.is_some() && !task.state.finished() {
                 task.intent = Intent::Pause;
                 task.state = TaskState::Paused;
@@ -2321,7 +2398,173 @@ mod tests {
             config: ConfigFile::default(),
             asr_service: None,
             ai_service: None,
+            study: StudyPlan::default(),
         }
+    }
+    #[test]
+    fn saved_study_opens_only_for_its_exact_note_version_after_reload() {
+        let mut state = State::initial("/tmp/library".into(), Default::default());
+        let id = state.enqueue(plan(&state.default_library), None).unwrap().0;
+        let version = PathBuf::from("/tmp/library/course/versions/one");
+        let output = PathBuf::from("/tmp/lectures/one/index.html");
+        let task = state.task_mut(&id).unwrap();
+        task.artifact = Some(version.clone());
+        task.study = StudyProgress::Complete {
+            output: output.clone(),
+        };
+        let restored: State = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored.study_output_for(&version), Some(output.as_path()));
+        assert_eq!(
+            restored.study_output_for(Path::new("/tmp/library/course/versions/two")),
+            None
+        );
+        state.task_mut(&id).unwrap().study = StudyProgress::Running;
+        assert_eq!(state.study_output_for(&version), None);
+        state.task_mut(&id).unwrap().study = StudyProgress::Failed {
+            error: "failed".into(),
+        };
+        assert_eq!(state.study_output_for(&version), None);
+    }
+
+    #[test]
+    fn legacy_draft_plan_and_task_default_to_no_study() {
+        let draft = Draft::new(true, "library".into(), Default::default());
+        let mut old_draft = serde_json::to_value(&draft).unwrap();
+        old_draft.as_object_mut().unwrap().remove("study");
+        let restored_draft: Draft = serde_json::from_value(old_draft).unwrap();
+        assert_eq!(restored_draft.study, StudyPlan::default());
+
+        let mut old_plan = serde_json::to_value(plan("library")).unwrap();
+        old_plan.as_object_mut().unwrap().remove("study");
+        let restored_plan: TaskPlan = serde_json::from_value(old_plan).unwrap();
+        assert_eq!(restored_plan.study, StudyPlan::default());
+
+        let mut state = State::initial("/tmp/library".into(), Default::default());
+        let id = state.enqueue(plan(&state.default_library), None).unwrap().0;
+        let mut old_task = serde_json::to_value(state.task(&id).unwrap()).unwrap();
+        old_task.as_object_mut().unwrap().remove("study");
+        let restored_task: TaskRecord = serde_json::from_value(old_task).unwrap();
+        assert_eq!(restored_task.study, StudyProgress::NotRequested);
+    }
+
+    #[test]
+    fn study_choice_changes_task_identity_and_is_frozen_at_enqueue() {
+        let mut state = State::initial("/tmp/library".into(), Default::default());
+        let mut first = plan(&state.default_library);
+        first.study = StudyPlan {
+            enabled: true,
+            prompt: "Teach the main ideas".into(),
+            service: Some("study-service".into()),
+            model: Some("study-model".into()),
+        };
+        let id = state.enqueue(first.clone(), None).unwrap().0;
+        assert_eq!(state.task(&id).unwrap().study, StudyProgress::Pending);
+
+        let mut changed = first.clone();
+        changed.study.prompt = "Use worked examples".into();
+        assert!(!first.same_work(&changed));
+        changed = first.clone();
+        changed.study.service = Some("another-service".into());
+        assert!(!first.same_work(&changed));
+        changed = first.clone();
+        changed.study.model = Some("another-model".into());
+        assert!(!first.same_work(&changed));
+        changed = first.clone();
+        changed.study.enabled = false;
+        assert!(!first.same_work(&changed));
+
+        state.draft_mut().unwrap().study.prompt = "Later draft edit".into();
+        assert_eq!(state.task(&id).unwrap().plan.study, first.study);
+    }
+
+    #[test]
+    fn hidden_study_choices_do_not_change_an_ai_off_task() {
+        let first = plan("library");
+        let mut toggled_off = first.clone();
+        toggled_off.study.prompt = "Saved for another course".into();
+        toggled_off.study.service = Some("unused-service".into());
+        toggled_off.study.model = Some("unused-model".into());
+        assert!(first.same_work(&toggled_off));
+    }
+
+    #[test]
+    fn teaching_choice_survives_source_switch_and_task_adjustment() {
+        let mut state = State::initial("/tmp/library".into(), Default::default());
+        let study = StudyPlan {
+            enabled: true,
+            prompt: "Explain each step".into(),
+            service: Some("teaching-ai".into()),
+            model: Some("model-a".into()),
+        };
+        state.draft_mut().unwrap().study = study.clone();
+        state.switch_source_kind(false, Default::default());
+        assert_eq!(state.draft().unwrap().study, study);
+
+        let mut submitted = plan(&state.default_library);
+        submitted.study = study.clone();
+        let id = state.enqueue(submitted, None).unwrap().0;
+        state.task_mut(&id).unwrap().state = TaskState::NeedsAttention;
+        state.adjust_task(&id, None).unwrap();
+        assert_eq!(state.draft().unwrap().study, study);
+    }
+
+    #[test]
+    fn proofreading_model_survives_source_switch_and_adjustment_without_mutating_task() {
+        let mut state = State::initial("/tmp/library".into(), Default::default());
+        state.draft_mut().unwrap().ai_service = Some("proofread-service".into());
+        state.draft_mut().unwrap().ai_model = Some("course-model".into());
+        state.switch_source_kind(false, Default::default());
+        assert_eq!(
+            state.draft().unwrap().ai_model.as_deref(),
+            Some("course-model")
+        );
+        assert_eq!(
+            state.draft().unwrap().ai_service.as_deref(),
+            Some("proofread-service")
+        );
+        let persisted = serde_json::to_value(state.draft().unwrap()).unwrap();
+        let restored: Draft = serde_json::from_value(persisted.clone()).unwrap();
+        assert_eq!(restored.ai_model.as_deref(), Some("course-model"));
+        let mut legacy = persisted;
+        legacy.as_object_mut().unwrap().remove("ai_model");
+        assert!(
+            serde_json::from_value::<Draft>(legacy)
+                .unwrap()
+                .ai_model
+                .is_none()
+        );
+        let mut submitted = plan(&state.default_library);
+        submitted.ai_service = Some("proofread-service".into());
+        submitted.config.llm.model = "course-model".into();
+        let mut other = submitted.clone();
+        other.config.llm.model = "different-model".into();
+        assert!(!submitted.same_work(&other));
+        let id = state.enqueue(submitted, None).unwrap().0;
+        state.task_mut(&id).unwrap().state = TaskState::NeedsAttention;
+        state.adjust_task(&id, None).unwrap();
+        assert_eq!(
+            state.draft().unwrap().ai_model.as_deref(),
+            Some("course-model")
+        );
+        state.draft_mut().unwrap().ai_model = Some("next-model".into());
+        assert_eq!(
+            state.task(&id).unwrap().plan.config.llm.model,
+            "course-model"
+        );
+    }
+
+    #[test]
+    fn interrupted_teaching_requires_confirmation_after_restart() {
+        let mut state = State::initial("/tmp/library".into(), Default::default());
+        let mut submitted = plan(&state.default_library);
+        submitted.study.enabled = true;
+        let id = state.enqueue(submitted, None).unwrap().0;
+        state.task_mut(&id).unwrap().study = StudyProgress::Running;
+        state.recover();
+        assert!(matches!(
+            state.task(&id).unwrap().study,
+            StudyProgress::Uncertain { .. }
+        ));
     }
     #[test]
     fn failed_commit_does_not_publish_an_unpersisted_task() {
@@ -3625,6 +3868,7 @@ mod tests {
         let refs = crate::preferences::ServiceRefs {
             asr: Some("stopped-asr".into()),
             llm: Some("stopped-ai".into()),
+            llm_model: None,
         };
         let needed = refs.required_for(&child.plan.config);
         assert!(needed.asr.is_none() && needed.llm.is_none());

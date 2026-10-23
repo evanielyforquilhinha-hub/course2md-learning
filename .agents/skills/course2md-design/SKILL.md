@@ -5,6 +5,8 @@ description: Design, implement and independently review course2md's native GPUI 
 
 # course2md desktop design
 
+Current user direction: apply the [Apple-style polish](references/apple-polish.md) when choosing visual treatments. It supersedes older project capsule, section-color and floating-label choices while retaining the task, state and layout contracts below.
+
 This is the project's design authority. Use Material 3 for composition, hierarchy, component roles and feedback; use Apple HIG for desktop task context and settings relationships while retaining macOS window, menu and keyboard conventions. The user's current instructions take precedence over this skill. Rejected native screens are evidence of problems, never a template to reproduce or an acceptance result.
 
 ## Read the reference that controls the decision

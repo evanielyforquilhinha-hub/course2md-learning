@@ -152,6 +152,9 @@ pub enum Status {
 pub struct State {
     active: Option<Ticket>,
     status: Status,
+    // Every displayed catalog owns a lifetime, including account catalogs that
+    // have no HTTP ticket. Open menus must stop accepting its choices on reset.
+    choices_cancelled: Arc<AtomicBool>,
 }
 
 impl State {
@@ -167,7 +170,12 @@ impl State {
             _ => &[],
         }
     }
+    fn choice_lifetime(&self) -> Arc<AtomicBool> {
+        self.choices_cancelled.clone()
+    }
     pub fn invalidate(&mut self) {
+        self.choices_cancelled.store(true, Ordering::Release);
+        self.choices_cancelled = Arc::new(AtomicBool::new(false));
         if let Some(active) = self.active.take() {
             active.cancelled.store(true, Ordering::Release);
         }
@@ -220,8 +228,8 @@ impl State {
             self.invalidate();
             return false;
         }
-        // Keep the completed ticket as the lifetime of the displayed choices.
-        // Invalidating the connection disables choices in an already-open menu.
+        // Keep the completed ticket so invalidation also cancels its connection.
+        // The shared choice lifetime guards both HTTP and account catalogs.
         self.status = match result {
             Ok(models) => Status::Ready(models),
             Err(Error::Cancelled) => Status::Idle,
@@ -421,7 +429,7 @@ pub fn model_field(
     };
 
     let models = state.models().to_vec();
-    let choices_current = state.active.as_ref().map(|ticket| ticket.cancelled.clone());
+    let choices_current = state.choice_lifetime();
     let selected = input.read(cx).value().to_string();
     let field = input.clone();
     let status = match state.status() {
@@ -471,15 +479,13 @@ pub fn model_field(
                                 PopupMenuItem::new(model.clone())
                                     .checked(*model == selected)
                                     .on_click(move |_, window, cx| {
-                                        // A primed (account-bound) list has no ticket; a
-                                        // cancelled ticket disables an already-open menu.
-                                        if choices_current.as_ref().is_some_and(|cancelled| {
-                                            cancelled.load(Ordering::Acquire)
-                                        }) {
+                                        if choices_current.load(Ordering::Acquire) {
                                             return;
                                         }
                                         field.update(cx, |input, cx| {
-                                            input.set_value(value.clone(), window, cx)
+                                            // This is a user edit: hydration's set_value
+                                            // suppresses Change and would skip draft autosave.
+                                            input.replace_all(value.clone(), window, cx)
                                         });
                                     }),
                             )
@@ -657,7 +663,7 @@ mod tests {
         let mut state = State::default();
         state.prime(vec!["gpt-fixture".into()]);
         assert_eq!(state.models(), &["gpt-fixture"]);
-        // 无连接票据：候选保持可选（菜单点击守卫只拒绝已取消的票据）
+        // Account catalogs need no HTTP ticket; their menu lifetime is separate.
         assert!(state.active.is_none());
         state.begin_external();
         assert!(state.loading());
@@ -669,6 +675,61 @@ mod tests {
         state.invalidate();
         assert!(state.models().is_empty());
         assert!(matches!(state.status(), Status::Idle));
+    }
+
+    #[test]
+    fn primed_menu_choices_expire_on_catalog_changes_and_drop() {
+        for change in 0..5 {
+            let mut state = State::default();
+            state.prime(vec!["old-account-model".into()]);
+            let open_menu = state.choice_lifetime();
+            assert!(!open_menu.load(Ordering::Acquire));
+            match change {
+                0 => state.invalidate(),
+                1 => state.begin_external(),
+                2 => state.reject(Error::Network),
+                3 => state.prime(vec!["new-account-model".into()]),
+                _ => drop(state),
+            }
+            assert!(
+                open_menu.load(Ordering::Acquire),
+                "an open menu must reject old account choices after change {change}"
+            );
+        }
+    }
+
+    #[test]
+    fn replacing_a_primed_catalog_expires_only_the_previous_menu() {
+        let mut state = State::default();
+        state.prime(vec!["old-account-model".into()]);
+        let old_menu = state.choice_lifetime();
+        state.prime(vec!["new-account-model".into()]);
+        let new_menu = state.choice_lifetime();
+        assert!(old_menu.load(Ordering::Acquire));
+        assert!(!new_menu.load(Ordering::Acquire));
+        assert_eq!(state.models(), &["new-account-model"]);
+        state.invalidate();
+        assert!(new_menu.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn http_refresh_expires_account_choices_and_keeps_new_choices_until_reset() {
+        let mut state = State::default();
+        state.prime(vec!["account-model".into()]);
+        let account_menu = state.choice_lifetime();
+        let request = Request::from_draft(&draft(), Secret::new("fixture-key")).unwrap();
+        let ticket = state.begin(&request);
+        assert!(account_menu.load(Ordering::Acquire));
+        assert!(state.complete(
+            ticket.clone(),
+            Some(request.key()),
+            Ok(vec!["http-model".into()])
+        ));
+        let http_menu = state.choice_lifetime();
+        assert!(!http_menu.load(Ordering::Acquire));
+        state.invalidate();
+        assert!(http_menu.load(Ordering::Acquire));
+        assert!(ticket.cancelled.load(Ordering::Acquire));
     }
 
     struct FakeTransport {

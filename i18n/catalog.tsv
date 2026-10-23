@@ -2377,3 +2377,148 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 原笔记已关闭；服务正在保存，但未用于其他笔记	原笔记已关闭；服务正在保存，但未用于其他笔记	The original note is closed; the service is still being saved and was not used for other notes	原筆記已關閉；服務正在儲存，但未用於其他筆記	元のノートは閉じられています。サービスは保存中で、他のノートには使用されていません
 服务正在保存，本次选择尚未保存：{}	服务正在保存，本次选择尚未保存：{}	The service is still being saved; this selection was not saved: {}	服務正在儲存，本次選擇尚未儲存：{}	サービスは保存中です。今回の選択は保存されていません: {}
 服务正在保存，补做任务尚未创建。请重试补做。	服务正在保存，补做任务尚未创建。请重试补做。	The service is still being saved; the repair task has not been created. Retry the repair.	服務正在儲存，補做任務尚未建立。請重試補做。	サービスは保存中です。補修タスクはまだ作成されていません。再度お試しください。
+修正识别错误、口头填充和标点，保留老师的原意与讲解顺序。	修正识别错误、口头填充和标点，保留老师的原意与讲解顺序。	Correct recognition errors, filler words and punctuation while preserving the teacher’s meaning and order.	修正辨識錯誤、口頭填充和標點，保留老師的原意與講解順序。	認識誤り、つなぎ言葉、句読点を修正し、先生の意図と説明の順序を保ちます。
+依据字幕提炼概述、要点和时间大纲；可单独开启，不会逐页扩写讲解。	依据字幕提炼概述、要点和时间大纲；可单独开启，不会逐页扩写讲解。	Summarize the transcript into an overview, key points and a timed outline. Works independently; it does not expand each slide into a lesson.	依據字幕提煉概述、要點和時間大綱；可單獨開啟，不會逐頁擴寫講解。	字幕から概要、要点、時刻付きの構成をまとめます。単独で有効にできますが、各スライドの解説は展開しません。
+把对应截图与文字一起发送，辅助校对公式和术语；模型须支持图片。	把对应截图与文字一起发送，辅助校对公式和术语；模型须支持图片。	Send each corresponding slide with its text to help proofread formulas and terminology. Requires an image-capable model.	把對應截圖與文字一起傳送，輔助校對公式和術語；模型須支援圖片。	対応する画像とテキストを送信し、数式と専門用語の校正を補助します。画像対応モデルが必要です。
+先开启文字校对，截图辅助才会生效；摘要仅使用字幕。	先开启文字校对，截图辅助才会生效；摘要仅使用字幕。	Enable proofreading to use slide assistance. Summaries use only the transcript.	先開啟文字校對，截圖輔助才會生效；摘要僅使用字幕。	画像の補助を使うには文字校正を有効にしてください。要約には字幕だけを使います。
+未开启 AI 处理：生成转录原稿	未开启 AI 处理：生成转录原稿	AI processing off: create the original transcript	未開啟 AI 處理：產生轉錄原稿	AI 処理は無効：文字起こし原稿を生成
+已开启：文字校对	已开启：文字校对	Enabled: transcript proofreading	已開啟：文字校對	有効：文字校正
+已开启：字幕摘要	已开启：字幕摘要	Enabled: transcript summary	已開啟：字幕摘要	有効：字幕の要約
+已开启：文字校对与字幕摘要	已开启：文字校对与字幕摘要	Enabled: proofreading and transcript summary	已開啟：文字校對與字幕摘要	有効：文字校正と字幕の要約
+逐页教学请使用项目中的「生成学习讲义」入口，按 43 号提示词结合截图整理。	逐页教学请使用项目中的「生成学习讲义」入口，按 43 号提示词结合截图整理。	For slide-by-slide lessons, use this project’s Generate Study Notes launcher, which applies Prompt 43 with slide images.	逐頁教學請使用專案中的「產生學習講義」入口，按 43 號提示詞結合截圖整理。	各スライドの学習用解説は、このプロジェクトの「学習ノートを生成」から作成できます。画像とプロンプト 43 を使います。
+API Key 用于认证；免费额度与计费以服务商控制台为准。	API Key 用于认证；免费额度与计费以服务商控制台为准。	API keys authenticate requests. Check your provider’s console for free quotas and billing.	API Key 用於認證；免費額度與計費以服務商控制台為準。	API キーは認証に使用します。無料枠と料金はサービス提供元の管理画面で確認してください。
+这些默认设置用于新任务；已提交的任务保留原有选项和模型。	这些默认设置用于新任务；已提交的任务保留原有选项和模型。	These defaults apply to new tasks. Submitted tasks retain their captured options and model.	這些預設設定用於新任務；已提交的任務保留原有選項和模型。	この既定設定は新しいタスクに適用されます。送信済みタスクは元の設定とモデルを保持します。
+未找到学习讲义工具，请从项目统一入口启动课程软件。	未找到学习讲义工具，请从项目统一入口启动课程软件。	Study-note tool not found. Launch the course app from the project launcher.	未找到學習講義工具，請從專案統一入口啟動課程軟體。	学習ノートツールが見つかりません。プロジェクトの共通ランチャーから起動してください。
+学习讲义工具路径已失效，请从项目统一入口启动。	学习讲义工具路径已失效，请从项目统一入口启动。	The study-note tool path is unavailable. Use the project launcher.	學習講義工具路徑已失效，請從專案統一入口啟動。	学習ノートツールのパスが無効です。共通ランチャーから起動してください。
+读取本地讲义配置超时，请关闭后重试。	读取本地讲义配置超时，请关闭后重试。	Reading local study-note settings timed out. Close this dialog and try again.	讀取本機講義設定逾時，請關閉後重試。	ローカル設定の読み取りがタイムアウトしました。閉じてから再試行してください。
+无法读取讲义配置；请检查工具的配置和课程资料。	无法读取讲义配置；请检查工具的配置和课程资料。	Cannot read study-note settings. Check the tool settings and course materials.	無法讀取講義設定；請檢查工具的設定和課程資料。	学習ノート設定を読み取れません。ツール設定と教材を確認してください。
+讲义配置不完整，请检查模型和 43 号提示词文件。	讲义配置不完整，请检查模型和 43 号提示词文件。	Study-note settings are incomplete. Check the model and Prompt 43 file.	講義設定不完整，請檢查模型和 43 號提示詞檔案。	設定が不完全です。モデルとプロンプト 43 のファイルを確認してください。
+讲义配置或课程资料已改变；请重新打开并确认后生成。	讲义配置或课程资料已改变；请重新打开并确认后生成。	Study-note settings or materials have changed. Reopen and confirm before generating.	講義設定或課程資料已改變；請重新開啟並確認後產生。	設定または教材が変更されています。もう一度開いて確認してから生成してください。
+讲义工具未返回结果文件，请查看项目运行日志。	讲义工具未返回结果文件，请查看项目运行日志。	The tool returned no result file. Check the project run logs.	講義工具未傳回結果檔案，請查看專案執行日誌。	結果ファイルが返されませんでした。プロジェクトの実行ログを確認してください。
+部分讲义未生成，请查看已生成内容和项目运行日志。	部分讲义未生成，请查看已生成内容和项目运行日志。	Some study notes could not be generated. Review existing output and project run logs.	部分講義未產生，請查看已產生內容和專案執行日誌。	一部のノートを生成できませんでした。生成済みの内容と実行ログを確認してください。
+43 学习讲义	43 学习讲义	Prompt 43 Study Notes	43 學習講義	プロンプト 43 学習ノート
+使用完整 43 号提示词正文快照，把对应截图和字幕整理为逐步讲解。	使用完整 43 号提示词正文快照，把对应截图和字幕整理为逐步讲解。	Use the full saved Prompt 43 text to turn corresponding slides and transcripts into step-by-step lessons.	使用完整 43 號提示詞正文快照，把對應截圖和字幕整理為逐步講解。	保存されたプロンプト 43 の全文を使い、対応する画像と字幕から段階的な解説を作成します。
+实际模型：{} · 服务：{}	实际模型：{} · 服务：{}	Model: {} · Service: {}	實際模型：{} · 服務：{}	モデル：{} · サービス：{}
+可处理 {} 页 · 保存到 {}	可处理 {} 页 · 保存到 {}	{} available pages · Save to {}	可處理 {} 頁 · 儲存到 {}	処理可能：{} ページ · 保存先：{}
+提示词快照 SHA-256：{}	提示词快照 SHA-256：{}	Prompt snapshot SHA-256: {}	提示詞快照 SHA-256：{}	プロンプトの SHA-256：{}
+本次处理页数	本次处理页数	Pages for this run	本次處理頁數	今回のページ数
+3 页	3 页	3 pages	3 頁	3 ページ
+10 页	10 页	10 pages	10 頁	10 ページ
+尚未配置 API Key，请在项目 AI 配置中补充后重新打开。	尚未配置 API Key，请在项目 AI 配置中补充后重新打开。	No API key is configured. Add it in project AI settings, then reopen this dialog.	尚未設定 API Key，請在專案 AI 設定中補充後重新開啟。	API キーが未設定です。プロジェクトの AI 設定に追加してから開き直してください。
+本课程没有可处理的截图与字幕，请先完成转录。	本课程没有可处理的截图与字幕，请先完成转录。	No usable slide-and-transcript units were found. Complete transcription first.	本課程沒有可處理的截圖與字幕，請先完成轉錄。	処理できる画像と字幕がありません。先に文字起こしを完了してください。
+正在读取本地课程和 AI 配置…不会发送 API 请求。	正在读取本地课程和 AI 配置…不会发送 API 请求。	Reading local materials and AI settings… No API request is sent.	正在讀取本機課程和 AI 設定…不會傳送 API 請求。	ローカルの教材と AI 設定を読み取り中…API リクエストは送信しません。
+正在生成讲义…关闭此窗口后仍会继续，可从阅读页再次查看。	正在生成讲义…关闭此窗口后仍会继续，可从阅读页再次查看。	Generating study notes… Closing this dialog keeps the task running. Reopen it from the reader to check progress.	正在產生講義…關閉此視窗後仍會繼續，可從閱讀頁再次查看。	ノートを生成中…この画面を閉じても処理は続きます。閲覧画面から再度開いて確認できます。
+学习讲义已生成，可以打开阅读。	学习讲义已生成，可以打开阅读。	Study notes are ready to open.	學習講義已產生，可以開啟閱讀。	学習ノートを生成しました。開いて読むことができます。
+打开学习讲义	打开学习讲义	Open study notes	開啟學習講義	学習ノートを開く
+打开已生成部分	打开已生成部分	Open available output	開啟已產生部分	生成済みの内容を開く
+开始后会把所选页的图片与字幕发送给上述模型，按 API 额度或服务商规则计费。	开始后会把所选页的图片与字幕发送给上述模型，按 API 额度或服务商规则计费。	Starting sends the selected slide images and transcripts to the model above. API quotas or provider charges apply.	開始後會把所選頁的圖片與字幕傳送給上述模型，按 API 額度或服務商規則計費。	開始すると選択したページの画像と字幕を上記のモデルに送信します。API 利用枠または提供元の料金規則が適用されます。
+开始生成	开始生成	Start generation	開始產生	生成を開始
+调整页数后生成	调整页数后生成	Adjust pages for another run	調整頁數後產生	ページ数を変更して生成
+讲义生成中…	讲义生成中…	Generating study notes…	講義產生中…	ノートを生成中…
+逐页教学请在阅读页选择「43 学习讲义」，结合截图与字幕生成分步讲解。	逐页教学请在阅读页选择「43 学习讲义」，结合截图与字幕生成分步讲解。	For slide-by-slide lessons, choose Prompt 43 Study Notes in the reader to combine images and transcripts into step-by-step explanations.	逐頁教學請在閱讀頁選擇「43 學習講義」，結合截圖與字幕產生分步講解。	各スライドの解説は、閲覧画面の「プロンプト 43 学習ノート」から画像と字幕を使って生成できます。
+已导入旧版设置和服务，原 config.toml 已保留；尚未发送 API 请求。	已导入旧版设置和服务，原 config.toml 已保留；尚未发送 API 请求。	Imported legacy preferences and services. The original config.toml is preserved; no API request was sent.	已匯入舊版設定和服務，原 config.toml 已保留；尚未傳送 API 請求。	旧バージョンの設定とサービスを取り込みました。元の config.toml は保持され、API リクエストは送信していません。
+旧版设置导入未完成，原 config.toml 已保留。请检查配置和凭据存储，或在设置中重新配置服务。	旧版设置导入未完成，原 config.toml 已保留。请检查配置和凭据存储，或在设置中重新配置服务。	Legacy preferences were not fully imported. The original config.toml is preserved. Check the configuration and credential storage, or configure services again in Settings.	舊版設定匯入未完成，原 config.toml 已保留。請檢查設定和憑據儲存，或在設定中重新配置服務。	旧設定の取り込みが完了しませんでした。元の config.toml は保持されています。設定と認証情報の保存先を確認するか、設定画面でサービスを再設定してください。
+讲义使用独立的模型配置；修改普通校对服务不会同步修改本讲义模型。	讲义使用独立的模型配置；修改普通校对服务不会同步修改本讲义模型。	Study notes use a separate model configuration. Changes to the proofreading service do not change this model.	講義使用獨立的模型設定；修改一般校對服務不會同步修改本講義模型。	学習ノートは独立したモデル設定を使用します。通常の校正サービスを変更しても、このモデルは変更されません。
+讲义配置文件	讲义配置文件	Study configuration file	講義設定檔	学習ノート設定ファイル
+全部课程	全部课程	All courses	全部課程	すべてのコース
+添加课程	添加课程	Add course	新增課程	コースを追加
+AI 整理	AI 整理	AI processing	AI 整理	AI 処理
+这里设置默认值，「添加课程」中的处理选项只对本次生效	这里设置默认值，「添加课程」中的处理选项只对本次生效	Set defaults here. Processing options in Add course apply only to that task.	這裡設定預設值，「新增課程」中的處理選項只對本次生效	ここで既定値を設定します。「コースを追加」の処理オプションは今回のタスクにのみ適用されます。
+ChatGPT 订阅（Codex 通道）	ChatGPT 订阅（Codex 通道）	ChatGPT subscription (Codex channel)	ChatGPT 訂閱（Codex 通道）	ChatGPT サブスクリプション（Codex 経由）
+使用 ChatGPT 订阅的 Codex 通道，与 Work / Codex 共用额度；不使用普通 ChatGPT 对话额度。	使用 ChatGPT 订阅的 Codex 通道，与 Work / Codex 共用额度；不使用普通 ChatGPT 对话额度。	Uses the Codex channel of your ChatGPT subscription and shares the Work / Codex allowance; ordinary ChatGPT chat allowance is separate.	使用 ChatGPT 訂閱的 Codex 通道，與 Work / Codex 共用額度；不使用一般 ChatGPT 對話額度。	ChatGPT サブスクリプションの Codex 経由で、Work / Codex の利用枠を共有します。通常の ChatGPT チャットの利用枠とは別です。
+使用本地 Ollama；不产生云端 API 费用。	使用本地 Ollama；不产生云端 API 费用。	Uses local Ollama with no cloud API charges.	使用本機 Ollama；不產生雲端 API 費用。	ローカルの Ollama を使用し、クラウド API 料金は発生しません。
+API 服务由服务商单独计费；额度与价格以服务商控制台为准。	API 服务由服务商单独计费；额度与价格以服务商控制台为准。	The API provider bills separately; check its console for allowance and pricing.	API 服務由服務商另外計費；額度與價格以服務商控制台為準。	API サービスは提供元が別途課金します。利用枠と料金は提供元の管理画面で確認してください。
+模型：{}	模型：{}	Model: {}	模型：{}	モデル：{}
+更改服务或模型	更改服务或模型	Change service or model	變更服務或模型	サービスまたはモデルを変更
+保存会更新这个服务的可选配置；已提交任务和其他已固定配置保留原模型。	保存会更新这个服务的可选配置；已提交任务和其他已固定配置保留原模型。	Saving updates the configurations available for this service; submitted tasks and other pinned configurations keep their original model.	儲存會更新此服務的可選設定；已提交任務和其他已固定的設定保留原模型。	保存するとこのサービスで選べる設定が更新されます。送信済みタスクと他の固定済み設定は元のモデルを保持します。
+保存后设为默认 AI 服务，用于新任务。	保存后设为默认 AI 服务，用于新任务。	Saving sets this as the default AI service for new tasks.	儲存後設為預設 AI 服務，供新任務使用。	保存すると新規タスクの既定の AI サービスになります。
+逐页教学请在阅读页选择「43 学习讲义」；可选择已保存的 AI 服务，也可导出材料到 ChatGPT 网页手动生成。	逐页教学请在阅读页选择「43 学习讲义」；可选择已保存的 AI 服务，也可导出材料到 ChatGPT 网页手动生成。	For page-by-page teaching, choose “43 Study Handout” in the reader; select a saved AI service or export materials for manual generation on the ChatGPT website.	逐頁教學請在閱讀頁選擇「43 學習講義」；可選擇已儲存的 AI 服務，也可匯出材料到 ChatGPT 網頁手動生成。	ページごとの解説には閲覧画面で「43 学習ノート」を選択します。保存済みの AI サービスを選ぶか、資料を書き出して ChatGPT のウェブサイトで手動生成できます。
+账号已连接，但模型目录获取失败；已保留当前模型，请重试获取。	账号已连接，但模型目录获取失败；已保留当前模型，请重试获取。	Account connected, but the model catalog could not be retrieved. Your current model is unchanged; try fetching again.	帳號已連線，但模型目錄取得失敗；已保留目前模型，請重試取得。	アカウントは接続済みですが、モデル一覧を取得できませんでした。現在のモデルは保持されています。再取得してください。
+账号连接后，选择模型并保存服务，即可在每个视频中选用。	账号连接后，选择模型并保存服务，即可在每个视频中选用。	After connecting your account, choose a model and save the service to make it available for each video.	帳號連線後，選擇模型並儲存服務，即可在每個影片中選用。	アカウント接続後、モデルを選んでサービスを保存すると、各動画で選択できます。
+选择模型并保存服务	选择模型并保存服务	Choose a model and save service	選擇模型並儲存服務	モデルを選んでサービスを保存
+找不到标准教学提示词，请检查学习讲义工具。	找不到标准教学提示词，请检查学习讲义工具。	The standard teaching prompt was not found. Check the study-handout tool.	找不到標準教學提示詞，請檢查學習講義工具。	標準の学習プロンプトが見つかりません。学習ノート作成ツールを確認してください。
+标准教学提示词为空或过长，请检查学习讲义工具。	标准教学提示词为空或过长，请检查学习讲义工具。	The standard teaching prompt is empty or too long. Check the study-handout tool.	標準教學提示詞為空或過長，請檢查學習講義工具。	標準の学習プロンプトが空か、長すぎます。学習ノート作成ツールを確認してください。
+请先连接 ChatGPT 订阅账号，再生成讲义。	请先连接 ChatGPT 订阅账号，再生成讲义。	Connect your ChatGPT subscription account before generating a handout.	請先連線 ChatGPT 訂閱帳號，再生成講義。	学習ノートを生成する前に、ChatGPT サブスクリプションのアカウントを接続してください。
+教学提示词不能为空，也不能超过 128 KiB。	教学提示词不能为空，也不能超过 128 KiB。	The teaching prompt must not be empty or exceed 128 KiB.	教學提示詞不能為空，也不能超過 128 KiB。	学習プロンプトを入力してください。128 KiB を超えることはできません。
+默认教学提示词已提交保存。	默认教学提示词已提交保存。	The default teaching prompt has been submitted for saving.	預設教學提示詞已提交儲存。	既定の学習プロンプトの保存を受け付けました。
+默认教学提示词已保存。	默认教学提示词已保存。	Default teaching prompt saved.	預設教學提示詞已儲存。	既定の学習プロンプトを保存しました。
+默认教学提示词保存失败：{}	默认教学提示词保存失败：{}	Failed to save the default teaching prompt: {}	預設教學提示詞儲存失敗：{}	既定の学習プロンプトを保存できませんでした：{}
+请选择本次 AI 服务，或改用导出到 ChatGPT。	请选择本次 AI 服务，或改用导出到 ChatGPT。	Choose an AI service for this run, or export to ChatGPT.	請選擇本次 AI 服務，或改用匯出到 ChatGPT。	今回の AI サービスを選択するか、ChatGPT への書き出しを選んでください。
+请填写本次模型 ID，或从服务返回的模型中选择。	请填写本次模型 ID，或从服务返回的模型中选择。	Enter a model ID for this run, or choose a model returned by the service.	請填寫本次模型 ID，或從服務傳回的模型中選擇。	今回のモデル ID を入力するか、サービスから取得したモデルを選択してください。
+请先为此服务保存 API Key。	请先为此服务保存 API Key。	Save an API Key for this service first.	請先為此服務儲存 API Key。	先にこのサービスの API Key を保存してください。
+无法获取订阅模型列表，请检查账号；当前模型保持不变。	无法获取订阅模型列表，请检查账号；当前模型保持不变。	Could not fetch subscription models. Check your account; the current model is unchanged.	無法取得訂閱模型清單，請檢查帳號；目前模型保持不變。	サブスクリプションのモデル一覧を取得できません。アカウントを確認してください。現在のモデルは変更されません。
+本次处理方式	本次处理方式	Processing method for this run	本次處理方式	今回の処理方法
+自动生成	自动生成	Generate automatically	自動生成	自動生成
+导出到 ChatGPT	导出到 ChatGPT	Export to ChatGPT	匯出到 ChatGPT	ChatGPT に書き出す
+本次 AI 服务	本次 AI 服务	AI service for this run	本次 AI 服務	今回の AI サービス
+请选择 AI 服务	请选择 AI 服务	Choose an AI service	請選擇 AI 服務	AI サービスを選択
+本次模型 ID	本次模型 ID	Model ID for this run	本次模型 ID	今回のモデル ID
+仅用于本次讲义；不会修改默认服务、其他任务或已生成结果。	仅用于本次讲义；不会修改默认服务、其他任务或已生成结果。	Applies only to this handout; default services, other tasks and existing results are unchanged.	僅用於本次講義；不會修改預設服務、其他任務或已生成結果。	今回の学習ノートにのみ適用されます。既定のサービス、他のタスク、生成済みの結果は変更されません。
+只导出截图、字幕和完整 43 号提示词，不调用 API。请到 ChatGPT 官网上传材料并选择模型；网页版额度以官网提示为准。	只导出截图、字幕和完整 43 号提示词，不调用 API。请到 ChatGPT 官网上传材料并选择模型；网页版额度以官网提示为准。	Exports screenshots, subtitles and the complete Prompt 43 without calling an API. Upload the materials and choose a model on the ChatGPT website; check the website for its usage allowance.	只匯出截圖、字幕和完整 43 號提示詞，不呼叫 API。請到 ChatGPT 官網上傳材料並選擇模型；網頁版額度以官網提示為準。	スクリーンショット、字幕、43 番プロンプトの全文を書き出し、API は呼び出しません。ChatGPT 公式サイトで資料をアップロードしてモデルを選択してください。ウェブ版の利用枠は公式サイトの表示に従います。
+本次教学提示词	本次教学提示词	Teaching prompt for this run	本次教學提示詞	今回の学習プロンプト
+修改只影响本次处理；保存为默认模板后，其他课程也会使用。编辑的是完整教学指令。	修改只影响本次处理；保存为默认模板后，其他课程也会使用。编辑的是完整教学指令。	Edits apply only to this run. Saving as the default template also applies them to other courses. You are editing the complete teaching instructions.	修改只影響本次處理；儲存為預設範本後，其他課程也會使用。編輯的是完整教學指令。	編集内容は今回の処理にのみ適用されます。既定のテンプレートとして保存すると、他の講座にも適用されます。ここでは学習指示の全文を編集します。
+保存为默认模板	保存为默认模板	Save as default template	儲存為預設範本	既定のテンプレートとして保存
+恢复标准模板	恢复标准模板	Restore standard template	還原標準範本	標準テンプレートに戻す
+收起教学提示词	收起教学提示词	Collapse teaching prompt	收合教學提示詞	学習プロンプトを折りたたむ
+编辑教学提示词	编辑教学提示词	Edit teaching prompt	編輯教學提示詞	学習プロンプトを編集
+正在整理上传材料…关闭窗口后仍会继续。	正在整理上传材料…关闭窗口后仍会继续。	Preparing upload materials… This continues after you close the window.	正在整理上傳材料…關閉視窗後仍會繼續。	アップロード資料を準備しています…ウィンドウを閉じても処理は続きます。
+材料已导出，请在 ChatGPT 网页手动生成讲义。	材料已导出，请在 ChatGPT 网页手动生成讲义。	Materials exported. Generate the handout manually on the ChatGPT website.	材料已匯出，請在 ChatGPT 網頁手動生成講義。	資料を書き出しました。ChatGPT のウェブサイトで学習ノートを手動生成してください。
+管理服务与模型	管理服务与模型	Manage services and models	管理服務與模型	サービスとモデルを管理
+查看上传材料包	查看上传材料包	Show upload package	檢視上傳材料包	アップロード資料パッケージを表示
+打开 ChatGPT 官网	打开 ChatGPT 官网	Open ChatGPT website	開啟 ChatGPT 官網	ChatGPT 公式サイトを開く
+查看导出材料	查看导出材料	View exported materials	檢視匯出材料	書き出した資料を表示
+导出只在本地整理材料；上传到官网需由你操作。	导出只在本地整理材料；上传到官网需由你操作。	Export prepares materials locally; you upload them to the website yourself.	匯出只在本機整理材料；上傳到官網需由你操作。	書き出しでは資料をローカルで準備します。公式サイトへのアップロードはご自身で行ってください。
+开始后会把所选截图与字幕发送到本次服务；额度不足或失败时停止，不自动切换付费服务。	开始后会把所选截图与字幕发送到本次服务；额度不足或失败时停止，不自动切换付费服务。	Starting sends the selected screenshots and subtitles to this service. Processing stops if the allowance is exhausted or a request fails; it does not switch to a paid service automatically.	開始後會把所選截圖與字幕傳送到本次服務；額度不足或失敗時停止，不自動切換付費服務。	開始すると選択したスクリーンショットと字幕が今回のサービスに送信されます。利用枠不足やエラー時は停止し、有料サービスには自動で切り替えません。
+导出上传材料	导出上传材料	Export upload materials	匯出上傳材料	アップロード資料を書き出す
+调整设置后重新处理	调整设置后重新处理	Adjust settings and process again	調整設定後重新處理	設定を調整して再処理
+AI 请求参数无效 / Invalid AI request parameters	AI 请求参数无效	Invalid AI request parameters	AI 請求參數無效	AI リクエストのパラメーターが無効です
+AI 请求未完成（HTTP {}）；请检查服务、模型与登录状态 / AI request failed (HTTP {}); check service, model and login	AI 请求未完成（HTTP {}）；请检查服务、模型与登录状态	AI request failed (HTTP {}); check service, model and sign-in status	AI 請求未完成（HTTP {}）；請檢查服務、模型與登入狀態	AI リクエストに失敗しました（HTTP {}）。サービス、モデル、ログイン状態を確認してください
+保存后可在每个视频中选择；当前默认服务保持不变。	保存后可在每个视频中选择；当前默认服务保持不变。	After saving, this service can be selected for each video; the current default stays unchanged.	儲存後可在每個影片中選擇；目前預設服務保持不變。	保存後は各動画で選択できます。現在の既定サービスは変更されません。
+设为以后默认…	设为以后默认…	Set as default for future tasks…	設為之後的預設…	今後の既定に設定…
+AI 学习讲义	AI 学习讲义	AI study notes	AI 學習講義	AI 学習ノート
+默认教学提示词	默认教学提示词	Default teaching prompt	預設教學提示詞	既定の学習プロンプト
+用于以后新课程的 AI 学习讲义；校对规则和已提交任务不受影响。	用于以后新课程的 AI 学习讲义；校对规则和已提交任务不受影响。	Used for AI study notes in new courses; proofreading rules and submitted tasks are unaffected.	用於之後新課程的 AI 學習講義；校對規則和已提交任務不受影響。	今後の新しい講座の AI 学習ノートに使用します。校正ルールと送信済みのタスクには影響しません。
+应用教学提示词	应用教学提示词	Apply teaching prompt	套用教學提示詞	学習プロンプトを適用
+恢复标准教学提示词	恢复标准教学提示词	Restore standard teaching prompt	還原標準教學提示詞	標準の学習プロンプトに戻す
+正在读取标准教学提示词…	正在读取标准教学提示词…	Loading the standard teaching prompt…	正在讀取標準教學提示詞…	標準の学習プロンプトを読み込み中…
+生成 AI 学习讲义	生成 AI 学习讲义	Generate AI study notes	生成 AI 學習講義	AI 学習ノートを生成
+转换后逐页整理截图和字幕；可能消耗服务额度或产生费用。	转换后逐页整理截图和字幕；可能消耗服务额度或产生费用。	After conversion, organize screenshots and subtitles page by page; this may use your service allowance or incur charges.	轉換後逐頁整理截圖和字幕；可能消耗服務額度或產生費用。	変換後、スクリーンショットと字幕をページごとに整理します。サービスの利用枠を消費したり、料金が発生したりする場合があります。
+本次提示词只用于这个课程，不会修改默认教学提示词。	本次提示词只用于这个课程，不会修改默认教学提示词。	This prompt applies only to this course and does not change the default teaching prompt.	本次提示詞只用於這個課程，不會修改預設教學提示詞。	このプロンプトはこの講座にのみ適用され、既定の学習プロンプトは変更されません。
+开始转换后会将截图和字幕发送到 {}；所选服务可能计费。	开始转换后会将截图和字幕发送到 {}；所选服务可能计费。	Starting conversion will send screenshots and subtitles to {}; the selected service may charge you.	開始轉換後會將截圖和字幕傳送到 {}；所選服務可能收費。	変換を開始すると、スクリーンショットと字幕が {} に送信されます。選択したサービスで料金が発生する場合があります。
+请选择已保存的 AI 服务，再开始转换。	请选择已保存的 AI 服务，再开始转换。	Choose a saved AI service before starting conversion.	請先選擇已儲存的 AI 服務，再開始轉換。	変換を開始する前に保存済みの AI サービスを選択してください。
+使用当前教学提示词，把对应截图和字幕整理为逐步讲解。	使用当前教学提示词，把对应截图和字幕整理为逐步讲解。	Use the current teaching prompt to turn the matching slides and transcript into step-by-step explanations.	使用目前教學提示詞，把對應截圖和字幕整理為逐步講解。	現在の学習プロンプトを使い、対応する画像と文字起こしを段階的な解説にまとめます。
+逐页教学请在阅读页选择「AI 学习讲义」；可选择已保存的 AI 服务，也可导出材料到 ChatGPT 网页手动生成。	逐页教学请在阅读页选择「AI 学习讲义」；可选择已保存的 AI 服务，也可导出材料到 ChatGPT 网页手动生成。	For slide-by-slide teaching, choose AI study notes in the reader. Select a saved AI service or export materials for manual generation on the ChatGPT website.	逐頁教學請在閱讀頁選擇「AI 學習講義」；可選擇已儲存的 AI 服務，也可匯出材料到 ChatGPT 網頁手動生成。	ページごとの解説には閲覧画面で「AI 学習ノート」を選択します。保存済みの AI サービスを選ぶか、資料を書き出して ChatGPT のウェブサイトで手動生成できます。
+学习讲义已生成	学习讲义已生成	Study notes ready	學習講義已產生	学習ノートを生成しました
+学习讲义生成失败	学习讲义生成失败	Study-note generation failed	學習講義產生失敗	学習ノートの生成に失敗しました
+学习讲义结果未确认	学习讲义结果未确认	Study-note result unconfirmed	學習講義結果未確認	学習ノートの結果を確認できません
+上次 AI 请求结果未确认；重试可能再次消耗服务额度。	上次 AI 请求结果未确认；重试可能再次消耗服务额度。	The previous AI request has no confirmed result. Retrying may consume your service allowance again.	上次 AI 請求結果未確認；重試可能再次消耗服務額度。	前回の AI リクエスト結果を確認できません。再試行すると利用枠を再度消費する場合があります。
+重试生成讲义	重试生成讲义	Retry study notes	重試產生講義	学習ノートの生成を再試行
+阅读原稿	阅读原稿	Read original transcript	閱讀原稿	元の文字起こしを読む
+重试会再次调用所选 AI 服务，可能消耗额度。	重试会再次调用所选 AI 服务，可能消耗额度。	Retrying calls the selected AI service again and may use more allowance.	重試會再次呼叫所選 AI 服務，可能消耗額度。	再試行すると選択した AI サービスを再度呼び出し、利用枠を消費する場合があります。
+正在生成 AI 学习讲义，请完成后再移动笔记库	正在生成 AI 学习讲义，请完成后再移动笔记库	AI study notes are being generated. Move the note library after generation finishes.	正在產生 AI 學習講義，請完成後再移動筆記庫	AI 学習ノートを生成中です。完了してからノートライブラリを移動してください
+字幕校对与摘要	字幕校对与摘要	Transcript cleanup and summary	字幕校對與摘要	文字起こしの校正と要約
+服务与模型在「服务与账号」中配置，添加课程时选择本次使用的服务。	服务与模型在「服务与账号」中配置，添加课程时选择本次使用的服务。	Configure services and models in Services & Accounts, then choose a service when adding a course.	服務與模型在「服務與帳號」中設定，新增課程時選擇本次使用的服務。	サービスとモデルは「サービスとアカウント」で設定し、コース追加時に今回使うサービスを選択します。
+校对与摘要服务	校对与摘要服务	Cleanup and summary service	校對與摘要服務	校正と要約のサービス
+校对与摘要模型	校对与摘要模型	Cleanup and summary model	校對與摘要模型	校正と要約のモデル
+请填写模型 ID	请填写模型 ID	Enter a model ID	請填寫模型 ID	モデル ID を入力してください
+转录完成后生成学习讲义	转录完成后生成学习讲义	Generate study notes after transcription	轉錄完成後產生學習講義	文字起こし後に学習ノートを生成
+结合截图和你的提示词生成分步讲解，可与字幕校对分别开启。	结合截图和你的提示词生成分步讲解，可与字幕校对分别开启。	Create step-by-step explanations using screenshots and your prompt. This works independently of transcript cleanup.	結合截圖和你的提示詞產生分步講解，可與字幕校對分別開啟。	画像とプロンプトを使って段階的な解説を生成します。文字起こしの校正とは個別に有効にできます。
+讲义服务	讲义服务	Study-note service	講義服務	学習ノートのサービス
+讲义服务：{}	讲义服务：{}	Study-note service: {}	講義服務：{}	学習ノートのサービス：{}
+讲义模型	讲义模型	Study-note model	講義模型	学習ノートのモデル
+已完成 {}/{} 个单元 · {}%	已完成 {}/{} 个单元 · {}%	Completed {}/{} units · {}%	已完成 {}/{} 個單元 · {}%	{}/{} 単元完了 · {}%
+正在准备学习讲义…	正在准备学习讲义…	Preparing study notes…	正在準備學習講義…	学習ノートを準備中…
+正在生成第 {} 个单元	正在生成第 {} 个单元	Generating unit {}	正在產生第 {} 個單元	単元 {} を生成中
+正在校核第 {} 个单元	正在校核第 {} 个单元	Reviewing unit {}	正在校核第 {} 個單元	単元 {} を確認中
+正在排版第 {} 个单元	正在排版第 {} 个单元	Formatting unit {}	正在排版第 {} 個單元	単元 {} を整形中
+正在保存讲义结果…	正在保存讲义结果…	Saving study notes…	正在儲存講義結果…	学習ノートを保存中…
+本次讲义生成已停止	本次讲义生成已停止	Study-note generation stopped	本次講義產生已停止	学習ノートの生成は停止しました
+查看讲义文件	查看讲义文件	Show study-note file	查看講義檔案	学習ノートのファイルを表示
+正在打开学习讲义…	正在打开学习讲义…	Opening study notes…	正在開啟學習講義…	学習ノートを開いています…
+已请求浏览器打开讲义，可使用「查看讲义文件」定位文件。	已请求浏览器打开讲义，可使用「查看讲义文件」定位文件。	Requested the browser to open the notes. Use Show study-note file to locate them.	已請求瀏覽器開啟講義，可使用「查看講義檔案」定位檔案。	ブラウザーにノートを開くよう要求しました。「ファイルを表示」から保存場所を確認できます。
+讲义文件不存在或已移动，请查看保存位置。	讲义文件不存在或已移动，请查看保存位置。	The study-note file is missing or moved. Check its saved location.	講義檔案不存在或已移動，請查看儲存位置。	学習ノートが見つからないか移動されています。保存場所を確認してください。
+讲义文件格式无效，请查看保存位置。	讲义文件格式无效，请查看保存位置。	Invalid study-note file format. Check its saved location.	講義檔案格式無效，請查看儲存位置。	学習ノートの形式が無効です。保存場所を確認してください。
+系统无法打开讲义（错误码 {}），请通过文件位置打开。	系统无法打开讲义（错误码 {}），请通过文件位置打开。	The system could not open the notes (error {}). Open them from their file location.	系統無法開啟講義（錯誤碼 {}），請透過檔案位置開啟。	ノートを開けませんでした（エラー {}）。保存場所から開いてください。
+系统无法打开讲义，请通过文件位置打开。	系统无法打开讲义，请通过文件位置打开。	The system could not open the notes. Open them from their file location.	系統無法開啟講義，請透過檔案位置開啟。	ノートを開けませんでした。保存場所から開いてください。
+只导出截图、字幕和本次教学提示词，不调用 API。请到 ChatGPT 官网上传材料并选择模型；网页版额度以官网提示为准。	只导出截图、字幕和本次教学提示词，不调用 API。请到 ChatGPT 官网上传材料并选择模型；网页版额度以官网提示为准。	Export screenshots, transcripts and this teaching prompt without calling an API. Upload them and choose a model on the ChatGPT website; website allowances apply.	只匯出截圖、字幕和本次教學提示詞，不呼叫 API。請到 ChatGPT 官網上傳材料並選擇模型；網頁版額度以官網提示為準。	画像、文字起こし、今回の学習プロンプトだけを書き出し、API は呼び出しません。ChatGPT のウェブサイトで資料をアップロードしモデルを選択してください。利用枠はサイトの表示に従います。
+重新生成学习讲义…	重新生成学习讲义…	Regenerate study notes…	重新產生學習講義…	学習ノートを再生成…

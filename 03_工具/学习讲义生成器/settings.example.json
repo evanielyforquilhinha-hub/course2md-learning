@@ -1,0 +1,6 @@
+{
+  "config_path": "C:/path/to/project/.local/config/course2md/config.toml",
+  "course_root": "C:/path/to/project/.local/courses",
+  "outputs_root": "C:/path/to/project/.local/study",
+  "model": ""
+}

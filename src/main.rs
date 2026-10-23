@@ -123,6 +123,22 @@ fn main() -> std::process::ExitCode {
         );
     let quiet =
         cli.opts.quiet || matches!(&cli.command, Some(Command::Summarize(args)) if args.quiet);
+    // The bridge has exactly one JSON response on stdout; even --json must not
+    // enable progress/log events that would corrupt this protocol.
+    if matches!(cli.command, Some(Command::AiRequest)) {
+        course2md::i18n::set_lang(course2md::i18n::Lang::ZhHans);
+        progress::set_quiet(true);
+        return match llm::ai_request(std::io::stdin().lock()) {
+            Ok(response) => {
+                println!("{response}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     if json || matches!(cli.command, Some(Command::RunTask)) {
         // Machine consumers parse message text; keep the protocol's source language.
         course2md::i18n::set_lang(course2md::i18n::Lang::ZhHans);
@@ -170,6 +186,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
         }
     }
     match cli.command {
+        Some(Command::AiRequest) => unreachable!("handled before logging initialization"),
         Some(Command::RunTask) => {
             let request = course2md::execution::Request::read(std::io::stdin().lock())?;
             Ok(course2md::runtime::block_on(course2md::execution::run(

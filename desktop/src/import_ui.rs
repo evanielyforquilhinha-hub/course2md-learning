@@ -1,24 +1,47 @@
 //! One start intent continues source preparation through to a readable note.
 use super::*;
 
-/// Hero and preview share this ruler; the lower workbench reflows independently.
-const WORKBENCH_WIDTH: f32 = 760.;
 /// Spacing between workbench sections and the inset of its panels.
 const SECTION_GAP: Rems = rems(24. / 14.);
-/// Square icon buttons beside the hero input.
-const HERO_CONTROL: Rems = rems(48. / 14.);
 /// Square icon buttons inside the selected video row.
 const ROW_CONTROL: Rems = rems(32. / 14.);
-/// Icons that lead a hero row.
-const HERO_ICON: Rems = rems(24. / 14.);
 /// Option labels and the selected video title.
 const TEXT_LEAD: Rems = rems(16. / 14.);
+
+/// A bounded pane owns its wheel offset; sibling inputs and headings stay put.
+fn workbench_scroll(
+    id: &'static str,
+    content: impl IntoElement,
+    scroll: &ScrollHandle,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .relative()
+        .w_full()
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .overflow_hidden()
+        .child(
+            v_flex()
+                .id((id, 0usize))
+                .w_full()
+                .h_full()
+                .min_w_0()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(scroll)
+                .child(div().w_full().min_w_0().flex_shrink_0().child(content)),
+        )
+        .child(crate::backend::vertical_scrollbar(scroll))
+}
 use crate::{motion, preferences::ServicePurpose, theme::*};
 use anyhow::Context as _;
 use course2md::config::TranscriptSource;
 use course2md::subtitle::{SubtitleEvidence, SubtitleReadError, SubtitleTrack};
 use gpui_component::{
     checkbox::Checkbox,
+    input::{Textarea, TextareaState},
     menu::{DropdownMenu, PopupMenuItem},
     switch::Switch,
 };
@@ -26,6 +49,89 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+
+pub(crate) struct StudyImportState {
+    pub(crate) draft_id: Option<String>,
+    pub(crate) prompt: Entity<TextareaState>,
+    pub(crate) model: Entity<InputState>,
+    pub(crate) loading: bool,
+    pub(crate) error: Option<String>,
+    models: crate::model_discovery::State,
+    catalog_revision: u64,
+    show_prompt: bool,
+}
+
+pub(crate) struct ProofreadImportState {
+    pub(crate) model: Entity<InputState>,
+    pub(crate) binding: Option<(String, String)>,
+    pub(crate) loading: bool,
+    active: bool,
+    models: crate::model_discovery::State,
+    catalog_revision: u64,
+}
+
+impl ProofreadImportState {
+    pub(crate) fn new(model: Entity<InputState>) -> Self {
+        Self {
+            model,
+            binding: None,
+            loading: false,
+            active: false,
+            models: Default::default(),
+            catalog_revision: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImportAiStage {
+    Proofread,
+    Study,
+}
+
+impl StudyImportState {
+    pub(crate) fn new(prompt: Entity<TextareaState>, model: Entity<InputState>) -> Self {
+        Self {
+            draft_id: None,
+            prompt,
+            model,
+            loading: false,
+            error: None,
+            models: Default::default(),
+            catalog_revision: 0,
+            show_prompt: false,
+        }
+    }
+}
+
+fn import_study_catalog_matches(
+    draft: Option<&workspace::Draft>,
+    draft_id: &str,
+    service_id: &str,
+) -> bool {
+    draft.is_some_and(|draft| {
+        draft.id == draft_id
+            && draft.study.enabled
+            && draft.study.service.as_deref() == Some(service_id)
+    })
+}
+
+fn enable_study_plan(
+    plan: &mut workspace::StudyPlan,
+    default_prompt: &str,
+    service: Option<(&str, &str)>,
+) {
+    plan.enabled = true;
+    if plan.prompt.is_empty() {
+        plan.prompt = default_prompt.to_owned();
+    }
+    if plan.service.is_none() {
+        plan.service = service.map(|(id, _)| id.to_owned());
+    }
+    if plan.model.as_deref().is_none_or(str::is_empty) {
+        plan.model = service.map(|(_, model)| model.to_owned());
+    }
+}
 
 /// A group heading in the processing panel's single field column.
 fn import_option_section(
@@ -37,12 +143,7 @@ fn import_option_section(
         .w_full()
         .min_w_0()
         .gap_2()
-        .child(
-            accessible_text(id, label)
-                .text_size(TEXT_BODY)
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(color(ACCENT)),
-        )
+        .child(theme::section_title(id, label))
         .child(content)
 }
 
@@ -153,6 +254,37 @@ pub(crate) fn conversion_ai_option_label(option: ConversionAiOption) -> &'static
         ConversionAiOption::Proofread => course2md::tr!("校对文字和标点"),
         ConversionAiOption::Vision => course2md::tr!("校对时附带对应截图"),
         ConversionAiOption::Summary => course2md::tr!("在开头生成摘要"),
+    }
+}
+
+/// Shared explanations for the workbench and generation defaults.
+pub(crate) fn conversion_ai_option_hint(
+    option: ConversionAiOption,
+    proofreading: bool,
+) -> &'static str {
+    match option {
+        ConversionAiOption::Proofread => {
+            course2md::tr!("修正识别错误、口头填充和标点，保留老师的原意与讲解顺序。")
+        }
+        ConversionAiOption::Summary => {
+            course2md::tr!("依据字幕提炼概述、要点和时间大纲；可单独开启，不会逐页扩写讲解。")
+        }
+        ConversionAiOption::Vision if proofreading => {
+            course2md::tr!("把对应截图与文字一起发送，辅助校对公式和术语；模型须支持图片。")
+        }
+        ConversionAiOption::Vision => {
+            course2md::tr!("先开启文字校对，截图辅助才会生效；摘要仅使用字幕。")
+        }
+    }
+}
+
+/// Vision alone is a saved preference, not an independently requested AI step.
+pub(crate) fn conversion_ai_status(proofreading: bool, summary: bool) -> &'static str {
+    match (proofreading, summary) {
+        (false, false) => course2md::tr!("未开启 AI 处理：生成转录原稿"),
+        (true, false) => course2md::tr!("已开启：文字校对"),
+        (false, true) => course2md::tr!("已开启：字幕摘要"),
+        (true, true) => course2md::tr!("已开启：文字校对与字幕摘要"),
     }
 }
 
@@ -365,7 +497,11 @@ fn retired_input_task<'a>(
         && draft
             .ai_service
             .as_ref()
-            .is_none_or(|id| Some(id) == submitted.plan.ai_service.as_ref()))
+            .is_none_or(|id| Some(id) == submitted.plan.ai_service.as_ref())
+        && draft
+            .ai_model
+            .as_ref()
+            .is_none_or(|model| model == &submitted.plan.config.llm.model))
     .then_some(task)
 }
 
@@ -1057,19 +1193,36 @@ impl Desktop {
 
     /// Source navigation is separate from the editable surface.
     fn source_kind_tabs(&self, cx: &mut Context<Self>) -> Div {
-        div().w_full().flex().justify_center().child(
-            SingleChoiceGroup::new("source-kind", course2md::tr!("视频来源"))
-                .options([
-                    ("online", course2md::tr!("视频链接")),
-                    ("local", course2md::tr!("本地文件")),
-                ])
-                .icon("online", icons::link())
-                .icon("local", icons::movie())
-                .selected(if self.online { "online" } else { "local" })
-                .on_change(cx.listener(|this, value: &SharedString, window, cx| {
-                    this.switch_source_kind(value.as_ref() == "online", window, cx);
-                })),
-        )
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                SingleChoiceGroup::new("source-kind", course2md::tr!("视频来源"))
+                    .options([
+                        ("online", course2md::tr!("视频链接")),
+                        ("local", course2md::tr!("本地文件")),
+                    ])
+                    .icon("online", icons::link())
+                    .icon("local", icons::movie())
+                    .selected(if self.online { "online" } else { "local" })
+                    .on_change(cx.listener(|this, value: &SharedString, window, cx| {
+                        this.switch_source_kind(value.as_ref() == "online", window, cx);
+                    })),
+            )
+            .child(
+                nav_action("generation-options", self.generation_options_open, cx)
+                    .icon(icons::tune())
+                    .label(course2md::tr!("处理选项"))
+                    .accessibility_label(course2md::tr!("处理选项"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.generation_options_open = !this.generation_options_open;
+                        cx.notify();
+                    })),
+            )
     }
 
     pub(super) fn subtitle_attention_required(&self) -> bool {
@@ -1097,7 +1250,7 @@ impl Desktop {
     }
 
     /// Visible field, local file target, and status belonging to this source.
-    pub fn box_source_input(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn box_source_input(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let mut view = v_flex().w_full().min_w_0().gap_4();
         let focused = self.inputs[&Field::Source]
             .read(cx)
@@ -1112,21 +1265,21 @@ impl Desktop {
             view = view.child(
                 v_flex()
                     .gap_2()
-                    // One elevated pill owns the field and its forward action, so
-                    // the start button reads as part of the input.
+                    // Keep the source field and its explicit preview/start action
+                    // together as one compact form row.
                     .child(
                         h_flex()
                             .w_full()
                             .min_w_0()
-                            .h(rems(64. / 14.))
-                            .pl(rems(20. / 14.))
-                            .pr(rems(10. / 14.))
-                            .gap(px(12.))
+                            .min_h(rems(52. / 14.))
+                            .pl_3()
+                            .pr_1()
+                            .py_1()
+                            .gap_2()
                             .items_center()
-                            .rounded(RADIUS_PILL)
+                            .rounded(RADIUS_SMALL)
                             .bg(color(SURFACE))
-                            // The field's own ring is off inside the pill, so the pill
-                            // carries focus: a 2px accent outline, as on other fields.
+                            // The enclosing form row carries the field's focus/error ring.
                             .border_2()
                             .border_color(color(
                                 if validation.is_some() || self.preview_error.is_some() {
@@ -1139,7 +1292,7 @@ impl Desktop {
                             ))
                             .child(
                                 Icon::new(icons::link())
-                                    .size(HERO_ICON)
+                                    .size(ICON_SLOT)
                                     .text_color(color(GRAY)),
                             )
                             .child(
@@ -1150,40 +1303,33 @@ impl Desktop {
                                         .w_full()
                                         .min_w_0()
                                         .px_0()
-                                        .text_size(TEXT_TITLE),
+                                        .text_size(TEXT_BODY),
                                 ),
                             )
                             .when(
                                 validation.is_some() || self.preview_error.is_some(),
                                 |row| {
                                     row.child(
-                                        icons::warning().size(HERO_ICON).text_color(color(DANGER)),
+                                        icons::warning().size(ICON_SLOT).text_color(color(DANGER)),
                                     )
                                 },
                             )
-                            // The link pill always ends in its action; an unavailable
-                            // start stays visible as a disabled button.
-                            .child(
-                                nav_action("generation-options", self.generation_options_open, cx)
-                                    .child(icons::tune().size(HERO_ICON))
-                                    .rounded(RADIUS_PILL)
-                                    .w(HERO_CONTROL)
-                                    .h(HERO_CONTROL)
-                                    .accessibility_label(course2md::tr!("处理选项"))
-                                    .tooltip(course2md::tr!("处理选项"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.generation_options_open =
-                                            !this.generation_options_open;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(self.preview_source_button(is_compact(window), cx)),
+                            // The link field retains its explicit preview action;
+                            // the options toggle above is shared with local files.
+                            .child(self.preview_source_button(cx)),
                     )
                     .when_some(validation, |view, message| view.child(issue(message))),
             );
         } else {
             view = self.local_source_input(view, cx);
         }
+        view
+    }
+
+    /// Preview cards, collections and recovery can be long; unlike the source
+    /// controls they belong in the source pane's own bounded scrolling body.
+    fn box_source_details(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let mut view = v_flex().w_full().min_w_0().gap_4();
         if self.preview_cancel.is_some() {
             view = view.child(
                 v_flex()
@@ -1255,35 +1401,7 @@ impl Desktop {
             view = self.candidate_list_view(view, title, cx);
         }
         view = self.source_preview_error(view, cx);
-        if self.online {
-            view = view.child(self.local_upload_hint(cx));
-        }
         view
-    }
-
-    fn local_upload_hint(&self, cx: &mut Context<Self>) -> Div {
-        h_flex()
-            .w_full()
-            .justify_center()
-            .items_center()
-            .flex_wrap()
-            .gap_3()
-            .pt(rems(8. / 14.))
-            .child(
-                accessible_text("import-drop-hint", course2md::tr!("或把本地视频拖进窗口"))
-                    .text_size(TEXT_BODY)
-                    .text_color(color(GRAY)),
-            )
-            .child(
-                outline_pill("choose-local-video")
-                    .icon(icons::file_upload())
-                    .label(course2md::tr!("选择文件"))
-                    .text_color(color(ACCENT))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.switch_source_kind(false, window, cx);
-                        this.pick_video(window, cx);
-                    })),
-            )
     }
 
     /// 候选合集列表：在线来源走多选批量入队；本地多文件拖入保持单选。
@@ -1676,22 +1794,28 @@ impl Desktop {
         let input = self.value(Field::Source, cx);
         if input.is_empty() {
             view = view.child(
-                v_flex()
+                h_flex()
                     .id("video-drop-zone")
-                    .gap_4()
-                    .p_6()
+                    .w_full()
+                    .min_w_0()
+                    .gap_3()
+                    .p_4()
                     .items_center()
+                    .flex_wrap()
                     .rounded(RADIUS_CARD)
                     .bg(color(INSET))
                     .border_1()
                     .border_color(color(CONTROL))
                     .child(
                         icons::file_upload()
-                            .size(rems(32. / 14.))
+                            .size(ICON_SLOT)
                             .text_color(color(ACCENT)),
                     )
                     .child(
                         accessible_text("import-drop-instruction", course2md::tr!("拖入本地视频"))
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_normal()
                             .text_size(TEXT_BODY)
                             .font_weight(FontWeight::MEDIUM),
                     )
@@ -1754,7 +1878,7 @@ impl Desktop {
                                     })),
                             )
                             .when(self.can_start_input(cx), |row| {
-                                row.child(self.preview_source_button(false, cx))
+                                row.child(self.preview_source_button(cx))
                             }),
                     )
                     .on_drop(
@@ -2306,6 +2430,188 @@ impl Desktop {
         view
     }
 
+    pub(crate) fn sync_study_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_proofread_editor(window, cx);
+        let Some(draft) = self.workspace.as_ref().and_then(|w| w.state.draft()) else {
+            return;
+        };
+        if self.study_import.draft_id.as_deref() == Some(&draft.id) {
+            return;
+        }
+        let id = draft.id.clone();
+        let prompt = draft.study.prompt.clone();
+        let model = draft.study.model.clone().unwrap_or_default();
+        self.study_import.loading = true;
+        self.study_import
+            .prompt
+            .update(cx, |input, cx| input.set_value(prompt, window, cx));
+        self.study_import
+            .model
+            .update(cx, |input, cx| input.set_value(model, window, cx));
+        self.study_import.draft_id = Some(id);
+        self.study_import.error = None;
+        self.study_import.loading = false;
+        self.study_import.models.invalidate();
+        self.study_import.catalog_revision = self.study_import.catalog_revision.wrapping_add(1);
+        self.study_import.show_prompt = false;
+        self.fetch_import_study_models(cx);
+    }
+
+    pub(crate) fn persist_study_editor(&mut self, cx: &mut Context<Self>) {
+        if self.study_import.loading {
+            return;
+        }
+        let Some(draft) = self.workspace.as_ref().and_then(|w| w.state.draft()) else {
+            return;
+        };
+        if self.study_import.draft_id.as_deref() != Some(&draft.id) {
+            return;
+        }
+        self.draft_deadline = Some(Instant::now() + Duration::from_millis(350));
+        self.schedule_wake(Duration::from_millis(350));
+        cx.notify();
+    }
+
+    fn persist_study_plan(&mut self, plan: workspace::StudyPlan, cx: &mut Context<Self>) -> bool {
+        let Some(workspace) = &mut self.workspace else {
+            return false;
+        };
+        match workspace.transaction(|state| {
+            state
+                .draft_mut()
+                .context(course2md::tr!("当前视频输入暂时不可用"))?
+                .study = plan;
+            Ok(())
+        }) {
+            Ok(()) => {
+                self.study_import.error = None;
+                self.advance_conversion_when_ready(cx);
+                cx.notify();
+                return true;
+            }
+            Err(error) => {
+                self.study_import.error =
+                    Some(course2md::tr!("当前输入尚未保存：{}", format!("{error:#}")));
+            }
+        }
+        cx.notify();
+        false
+    }
+
+    fn set_study_enabled(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut plan) = self
+            .workspace
+            .as_ref()
+            .and_then(|w| w.state.draft())
+            .map(|draft| draft.study.clone())
+        else {
+            return;
+        };
+        if self.study_import.draft_id.as_deref()
+            == self
+                .workspace
+                .as_ref()
+                .and_then(|w| w.state.draft())
+                .map(|d| d.id.as_str())
+        {
+            plan.prompt = self.study_import.prompt.read(cx).value().to_string();
+            plan.model = Some(self.study_import.model.read(cx).value().to_string());
+        }
+        if enabled {
+            let standard = match crate::study_ui::standard_study_prompt() {
+                Ok(prompt) => prompt,
+                Err(error) => {
+                    self.study_import.error = Some(format!("{error:#}"));
+                    cx.notify();
+                    return;
+                }
+            };
+            let default = self
+                .preferences
+                .generation()
+                .study_prompt
+                .as_deref()
+                .unwrap_or(&standard);
+            let selected = self
+                .selected_task_service(ServicePurpose::Ai)
+                .filter(|version| {
+                    !self
+                        .preferences
+                        .service_retired_in_snapshot(&version.service_id)
+                });
+            enable_study_plan(
+                &mut plan,
+                default,
+                selected
+                    .as_ref()
+                    .map(|version| (version.id.as_str(), version.config.model.as_str())),
+            );
+            self.study_import.loading = true;
+            self.study_import.prompt.update(cx, |input, cx| {
+                input.set_value(plan.prompt.clone(), window, cx)
+            });
+            self.study_import.model.update(cx, |input, cx| {
+                input.set_value(plan.model.clone().unwrap_or_default(), window, cx)
+            });
+            self.study_import.loading = false;
+        } else {
+            plan.enabled = false;
+        }
+        if self.persist_study_plan(plan, cx) {
+            self.study_import.models.invalidate();
+            self.study_import.catalog_revision = self.study_import.catalog_revision.wrapping_add(1);
+            if enabled {
+                self.fetch_import_study_models(cx);
+            }
+        }
+    }
+
+    pub(crate) fn sync_proofread_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let draft = self.workspace.as_ref().and_then(|w| w.state.draft());
+        let selected = self.import_ai_service(ImportAiStage::Proofread);
+        let binding = draft
+            .zip(selected.as_ref())
+            .map(|(draft, service)| (draft.id.clone(), service.id.clone()));
+        if self.proofread_import.binding == binding {
+            self.sync_proofread_activity(cx);
+            return;
+        }
+        let model = draft
+            .and_then(|d| d.ai_model.clone())
+            .or_else(|| selected.map(|v| v.config.model))
+            .unwrap_or_default();
+        self.proofread_import.loading = true;
+        self.proofread_import
+            .model
+            .update(cx, |input, cx| input.set_value(model, window, cx));
+        self.proofread_import.binding = binding;
+        self.proofread_import.loading = false;
+        self.proofread_import.active = self.task_options.llm || self.task_options.summarize;
+        self.invalidate_import_catalog(ImportAiStage::Proofread);
+        self.fetch_import_ai_models(ImportAiStage::Proofread, cx);
+    }
+
+    pub(crate) fn sync_proofread_activity(&mut self, cx: &mut Context<Self>) {
+        let active = self.task_options.llm || self.task_options.summarize;
+        if self.proofread_import.active == active {
+            return;
+        }
+        self.proofread_import.active = active;
+        self.invalidate_import_catalog(ImportAiStage::Proofread);
+        if active {
+            self.fetch_import_ai_models(ImportAiStage::Proofread, cx);
+        }
+    }
+
+    pub(crate) fn persist_proofread_editor(&mut self, cx: &mut Context<Self>) {
+        if self.proofread_import.loading {
+            return;
+        }
+        self.draft_deadline = Some(Instant::now() + Duration::from_millis(350));
+        self.schedule_wake(Duration::from_millis(350));
+        cx.notify();
+    }
+
     fn import_ai_options(&self, cx: &mut Context<Self>) -> Div {
         let mut choices = v_flex().w_full().min_w_0().gap_2();
         for (index, option) in [
@@ -2318,13 +2624,14 @@ impl Desktop {
         {
             choices = choices.child(import_option_switch_row(
                 conversion_ai_option_label(option),
-                "",
+                conversion_ai_option_hint(option, self.task_options.llm),
                 processing_switch(Switch::new(("import-ai-option", index)))
                     .checked(conversion_ai_option_enabled(&self.task_options, option))
                     .disabled(option == ConversionAiOption::Vision && !self.task_options.llm)
-                    .on_click(cx.listener(move |this, enabled, _, cx| {
+                    .on_click(cx.listener(move |this, enabled, window, cx| {
                         apply_conversion_ai_option(&mut this.task_options, option, *enabled);
                         this.persist_task_options(cx);
+                        this.sync_proofread_editor(window, cx);
                     })),
             ));
         }
@@ -2344,44 +2651,477 @@ impl Desktop {
             .gap(SECTION_GAP)
             .child(import_option_section(
                 "import-ai-label",
-                course2md::tr!("AI 处理"),
+                course2md::tr!("字幕校对与摘要"),
                 choices,
-            ));
+            ))
+            .child(aux_text(conversion_ai_status(
+                self.task_options.llm,
+                self.task_options.summarize,
+            )));
         if self.task_options.llm || self.task_options.summarize {
-            let mut service = v_flex()
-                .w_full()
-                .min_w_0()
-                .gap_2()
-                .child(self.task_service_picker(ServicePurpose::Ai, cx));
-            if let Some(selected) = self.selected_task_service(ServicePurpose::Ai) {
-                service = service.child(aux_text(course2md::tr!(
-                    "{}会发送到 {}",
-                    if self.task_options.llm && self.task_options.vision {
-                        course2md::tr!("文字及对应截图")
-                    } else {
-                        course2md::tr!("文字")
-                    },
-                    selected.config.host()
-                )));
-            }
-            view = view.child(
-                if self.selected_task_service(ServicePurpose::Ai).is_some() {
-                    outlined_field_label(
-                        "import-ai-service-label",
-                        course2md::tr!("AI 服务"),
-                        TEXT_AUX,
-                        service,
-                    )
-                } else {
-                    import_option_label(
-                        "import-ai-service-label",
-                        course2md::tr!("AI 服务"),
-                        service,
-                    )
-                },
-            );
+            view = view.child(self.import_ai_selection(ImportAiStage::Proofread, cx));
         }
         view
+    }
+
+    fn import_study_service(&self) -> Option<&crate::preferences::ServiceVersion> {
+        let draft = self.workspace.as_ref()?.state.draft()?;
+        if !draft.study.enabled {
+            return None;
+        }
+        self.preferences
+            .version(draft.study.service.as_deref()?)
+            .filter(|version| {
+                version.config.protocol.purpose() == ServicePurpose::Ai
+                    && !self
+                        .preferences
+                        .service_retired_in_snapshot(&version.service_id)
+            })
+    }
+
+    fn import_study_catalog_current(&self, revision: u64, draft: &str, service: &str) -> bool {
+        self.study_import.catalog_revision == revision
+            && import_study_catalog_matches(
+                self.workspace.as_ref().and_then(|w| w.state.draft()),
+                draft,
+                service,
+            )
+            && self.import_study_service().is_some_and(|v| v.id == service)
+    }
+
+    /// Model discovery reads the selected service's catalog; it never sends
+    /// course material or changes the currently selected model.
+    fn fetch_import_study_models(&mut self, cx: &mut Context<Self>) {
+        self.fetch_import_ai_models(ImportAiStage::Study, cx);
+    }
+
+    fn import_ai_service(
+        &self,
+        stage: ImportAiStage,
+    ) -> Option<crate::preferences::ServiceVersion> {
+        match stage {
+            ImportAiStage::Study => self.import_study_service().cloned(),
+            ImportAiStage::Proofread => {
+                self.selected_task_service(ServicePurpose::Ai).filter(|v| {
+                    v.config.protocol.purpose() == ServicePurpose::Ai
+                        && !self.preferences.service_retired_in_snapshot(&v.service_id)
+                })
+            }
+        }
+    }
+
+    fn import_catalog(&self, stage: ImportAiStage) -> (&crate::model_discovery::State, u64) {
+        match stage {
+            ImportAiStage::Study => (
+                &self.study_import.models,
+                self.study_import.catalog_revision,
+            ),
+            ImportAiStage::Proofread => (
+                &self.proofread_import.models,
+                self.proofread_import.catalog_revision,
+            ),
+        }
+    }
+
+    fn import_catalog_mut(
+        &mut self,
+        stage: ImportAiStage,
+    ) -> (&mut crate::model_discovery::State, &mut u64) {
+        match stage {
+            ImportAiStage::Study => (
+                &mut self.study_import.models,
+                &mut self.study_import.catalog_revision,
+            ),
+            ImportAiStage::Proofread => (
+                &mut self.proofread_import.models,
+                &mut self.proofread_import.catalog_revision,
+            ),
+        }
+    }
+
+    fn invalidate_import_catalog(&mut self, stage: ImportAiStage) {
+        let (models, revision) = self.import_catalog_mut(stage);
+        models.invalidate();
+        *revision = revision.wrapping_add(1);
+    }
+
+    fn import_ai_catalog_current(
+        &self,
+        stage: ImportAiStage,
+        revision: u64,
+        draft_id: &str,
+        service: &str,
+    ) -> bool {
+        if stage == ImportAiStage::Study {
+            return self.import_study_catalog_current(revision, draft_id, service);
+        }
+        self.import_catalog(stage).1 == revision
+            && (self.task_options.llm || self.task_options.summarize)
+            && self
+                .workspace
+                .as_ref()
+                .and_then(|w| w.state.draft())
+                .is_some_and(|d| d.id == draft_id)
+            && self
+                .import_ai_service(stage)
+                .is_some_and(|v| v.id == service)
+    }
+
+    fn fetch_import_ai_models(&mut self, stage: ImportAiStage, cx: &mut Context<Self>) {
+        if self.import_catalog(stage).0.loading()
+            || (stage == ImportAiStage::Proofread
+                && !self.task_options.llm
+                && !self.task_options.summarize)
+        {
+            return;
+        }
+        let Some(version) = self.import_ai_service(stage) else {
+            return;
+        };
+        let Some(draft_id) = self
+            .workspace
+            .as_ref()
+            .and_then(|w| w.state.draft())
+            .map(|d| d.id.clone())
+        else {
+            return;
+        };
+        let (_, generation) = self.import_catalog_mut(stage);
+        *generation = generation.wrapping_add(1);
+        let revision = *generation;
+        let selected = version.id.clone();
+        if version.config.protocol == crate::preferences::ServiceProtocol::CodexResponses {
+            self.import_catalog_mut(stage).0.begin_external();
+            let worker =
+                crate::spawn_blocking_io(course2md::login::codex::refresh_models_for_desktop);
+            cx.spawn(async move |this, cx| {
+                let result = worker.recv().await;
+                let _ = this.update(cx, |this, cx| {
+                    if !this.import_ai_catalog_current(stage, revision, &draft_id, &selected) {
+                        return;
+                    }
+                    match result {
+                        Ok(Ok(models)) => this
+                            .import_catalog_mut(stage)
+                            .0
+                            .prime(models.into_iter().map(|(id, _)| id).collect()),
+                        _ => this.import_catalog_mut(stage).0.reject(
+                            crate::model_discovery::Error::Custom(
+                                course2md::tr!(
+                                    "无法获取订阅模型列表，请检查账号；当前模型保持不变。"
+                                )
+                                .into(),
+                            ),
+                        ),
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        } else {
+            let request = crate::model_discovery::Request::from_draft(
+                &crate::preferences::ServiceDraft::from_version(&version),
+                crate::credentials::Secret::new(""),
+            );
+            let request = match request {
+                Ok(request) => request,
+                Err(error) => {
+                    self.import_catalog_mut(stage).0.reject(error);
+                    cx.notify();
+                    return;
+                }
+            };
+            let ticket = self.import_catalog_mut(stage).0.begin(&request);
+            let vault = self.preferences.vault();
+            cx.spawn(async move |this, cx| {
+                let result = crate::model_discovery::discover(request, vault).await;
+                let _ = this.update(cx, |this, cx| {
+                    if !this.import_ai_catalog_current(stage, revision, &draft_id, &selected) {
+                        return;
+                    }
+                    let current = this.import_ai_service(stage).and_then(|version| {
+                        crate::model_discovery::RequestKey::from_draft(
+                            &crate::preferences::ServiceDraft::from_version(&version),
+                            "",
+                        )
+                        .ok()
+                    });
+                    this.import_catalog_mut(stage)
+                        .0
+                        .complete(ticket, current.as_ref(), result);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    fn select_study_service(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(version) = self
+            .preferences
+            .version(id)
+            .filter(|version| {
+                version.config.protocol.purpose() == ServicePurpose::Ai
+                    && !self
+                        .preferences
+                        .service_retired_in_snapshot(&version.service_id)
+            })
+            .cloned()
+        else {
+            return;
+        };
+        let Some(mut plan) = self
+            .workspace
+            .as_ref()
+            .and_then(|w| w.state.draft())
+            .map(|draft| draft.study.clone())
+        else {
+            return;
+        };
+        plan.prompt = self.study_import.prompt.read(cx).value().to_string();
+        plan.service = Some(version.id);
+        plan.model = Some(version.config.model);
+        self.study_import.loading = true;
+        self.study_import.model.update(cx, |input, cx| {
+            input.set_value(plan.model.clone().unwrap_or_default(), window, cx)
+        });
+        self.study_import.loading = false;
+        if self.persist_study_plan(plan, cx) {
+            self.study_import.models.invalidate();
+            self.study_import.catalog_revision = self.study_import.catalog_revision.wrapping_add(1);
+            self.fetch_import_study_models(cx);
+        }
+    }
+
+    /// Both stages use the same field composition; service editing stays in settings.
+    fn import_ai_selection(&self, stage: ImportAiStage, cx: &mut Context<Self>) -> Div {
+        let index = stage as usize;
+        let selected = self.import_ai_service(stage);
+        let selected_id = selected.as_ref().map(|v| v.id.clone());
+        let mut services = self
+            .preferences
+            .latest_versions()
+            .into_values()
+            .filter(|v| {
+                v.config.protocol.purpose() == ServicePurpose::Ai
+                    && !self.preferences.service_retired_in_snapshot(&v.service_id)
+            })
+            .collect::<Vec<_>>();
+        // A pinned older configuration remains selectable without silently upgrading it.
+        if let Some(version) = &selected
+            && !services.iter().any(|v| v.id == version.id)
+        {
+            services.insert(0, version.clone());
+        }
+        let label = match stage {
+            ImportAiStage::Proofread => course2md::tr!("校对与摘要服务"),
+            ImportAiStage::Study => course2md::tr!("讲义服务"),
+        };
+        let model_label = match stage {
+            ImportAiStage::Proofread => course2md::tr!("校对与摘要模型"),
+            ImportAiStage::Study => course2md::tr!("讲义模型"),
+        };
+        let name = selected
+            .as_ref()
+            .map(|v| v.config.name.clone())
+            .unwrap_or_else(|| course2md::tr!("请选择 AI 服务").into());
+        let draft_id = self
+            .workspace
+            .as_ref()
+            .and_then(|w| w.state.draft())
+            .map(|d| d.id.clone());
+        let weak = cx.weak_entity();
+        let picker = control(("import-ai-service", index))
+            .w_full()
+            .min_w_0()
+            .h_auto()
+            .min_h(CONTROL_HEIGHT)
+            .py_2()
+            .accessibility_label(course2md::tr!("{}：{}", label, name))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .font_weight(FontWeight::NORMAL)
+                    .child(name),
+            )
+            .child(icons::chevron_down().size_4().flex_shrink_0())
+            .dropdown_menu(move |menu, _, _| {
+                services
+                    .iter()
+                    .fold(menu.scrollable(true), |menu, version| {
+                        let id = version.id.clone();
+                        let name = version.config.name.clone();
+                        let model = version.config.model.clone();
+                        let current = selected_id.as_ref() == Some(&id);
+                        let weak = weak.clone();
+                        let draft_id = draft_id.clone();
+                        menu.item(
+                            PopupMenuItem::element(move |_, _| {
+                                v_flex()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .child(name.clone())
+                                    .child(aux_text(model.clone()))
+                            })
+                            .checked(current)
+                            .on_click(move |_, window, cx| {
+                                let _ = weak.update(cx, |this, cx| {
+                                    if this
+                                        .workspace
+                                        .as_ref()
+                                        .and_then(|w| w.state.draft())
+                                        .map(|d| &d.id)
+                                        != draft_id.as_ref()
+                                    {
+                                        return;
+                                    }
+                                    if stage == ImportAiStage::Study {
+                                        this.select_study_service(&id, window, cx);
+                                    } else if this.preferences.version(&id).is_some_and(|v| {
+                                        v.config.protocol.purpose() == ServicePurpose::Ai
+                                            && !this
+                                                .preferences
+                                                .service_retired_in_snapshot(&v.service_id)
+                                    }) && this.save_current_draft(cx)
+                                        && this.bind_service(
+                                            ServicePurpose::Ai,
+                                            Some(id.clone()),
+                                            true,
+                                            cx,
+                                        )
+                                    {
+                                        this.proofread_import.binding = None;
+                                        this.sync_proofread_editor(window, cx);
+                                    }
+                                });
+                            }),
+                        )
+                    })
+            });
+        let model = match stage {
+            ImportAiStage::Proofread => &self.proofread_import.model,
+            ImportAiStage::Study => &self.study_import.model,
+        };
+        let mut fields = v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_3()
+            .child(import_option_label(
+                ("import-ai-service-label", index),
+                label,
+                picker,
+            ))
+            .child(import_option_label(
+                ("import-ai-model-label", index),
+                model_label,
+                crate::model_discovery::model_field(
+                    if stage == ImportAiStage::Study {
+                        "import-study-model"
+                    } else {
+                        "import-proofread-model"
+                    },
+                    model,
+                    self.import_catalog(stage).0,
+                    selected.is_none(),
+                    None,
+                    cx.listener(move |this, _, _, cx| this.fetch_import_ai_models(stage, cx)),
+                    cx,
+                ),
+            ));
+        if let Some(selected) = selected {
+            fields = fields.child(aux_text(
+                crate::settings_ui::service_form::ai_service_billing_hint(selected.config.protocol),
+            ));
+            fields = fields.child(aux_text(course2md::tr!(
+                "{}会发送到 {}",
+                if stage == ImportAiStage::Study
+                    || (self.task_options.llm && self.task_options.vision)
+                {
+                    course2md::tr!("文字及对应截图")
+                } else {
+                    course2md::tr!("文字")
+                },
+                selected.config.host()
+            )));
+        } else {
+            fields = fields.child(issue(course2md::tr!(
+                "请选择已保存的 AI 服务，再开始转换。"
+            )));
+        }
+        fields.child(
+            quiet(("import-ai-manage-services", index))
+                .self_start()
+                .icon(icons::settings())
+                .label(course2md::tr!("管理服务与模型"))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_settings(window, cx);
+                    this.select_settings_tab(crate::settings_ui::SettingsTab::Services, window, cx);
+                })),
+        )
+    }
+
+    fn import_study_options(&self, cx: &mut Context<Self>) -> Div {
+        let plan = self
+            .workspace
+            .as_ref()
+            .and_then(|w| w.state.draft())
+            .map(|draft| &draft.study);
+        let enabled = plan.is_some_and(|plan| plan.enabled);
+        let mut fields = v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_3()
+            .child(import_option_switch_row(
+                course2md::tr!("转录完成后生成学习讲义"),
+                course2md::tr!("结合截图和你的提示词生成分步讲解，可与字幕校对分别开启。"),
+                processing_switch(Switch::new("import-study-enabled"))
+                    .checked(enabled)
+                    .on_click(cx.listener(|this, enabled, window, cx| {
+                        this.set_study_enabled(*enabled, window, cx)
+                    })),
+            ));
+        if enabled {
+            fields = fields
+                .child(self.import_ai_selection(ImportAiStage::Study, cx))
+                .child(
+                    quiet("import-study-edit-prompt")
+                        .self_start()
+                        .icon(if self.study_import.show_prompt {
+                            icons::chevron_up()
+                        } else {
+                            icons::edit()
+                        })
+                        .label(if self.study_import.show_prompt {
+                            course2md::tr!("收起教学提示词")
+                        } else {
+                            course2md::tr!("编辑教学提示词")
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.study_import.show_prompt = !this.study_import.show_prompt;
+                            cx.notify();
+                        })),
+                )
+                .when(self.study_import.show_prompt, |fields| {
+                    fields.child(import_option_label(
+                        "import-study-prompt-label",
+                        course2md::tr!("本次教学提示词"),
+                        Textarea::new(&self.study_import.prompt)
+                            .w_full()
+                            .h(px(240.))
+                            .aria_label(course2md::tr!("本次教学提示词")),
+                    ))
+                })
+                .child(aux_text(course2md::tr!(
+                    "本次提示词只用于这个课程，不会修改默认教学提示词。"
+                )));
+        }
+        if let Some(error) = &self.study_import.error {
+            fields = fields.child(issue(error.clone()));
+        }
+        import_option_section("import-study-label", course2md::tr!("AI 学习讲义"), fields)
     }
 
     fn reset_task_ai_overrides(&mut self, cx: &mut Context<Self>) {
@@ -2409,6 +3149,7 @@ impl Desktop {
         self.task_options.llm = defaults.llm;
         self.task_options.summarize = defaults.summarize;
         self.task_options.vision = defaults.vision;
+        self.sync_proofread_activity(cx);
         self.advance_conversion_when_ready(cx);
         cx.notify();
     }
@@ -2747,8 +3488,8 @@ impl Desktop {
                 .child(
                     outline_pill("import-new-folder")
                         .icon(icons::create_new_folder())
-                        .w(HERO_CONTROL)
-                        .h(HERO_CONTROL)
+                        .w(CONTROL_HEIGHT)
+                        .h(CONTROL_HEIGHT)
                         .px_0()
                         .accessibility_label(course2md::tr!("新建文件夹"))
                         .tooltip(course2md::tr!("新建文件夹"))
@@ -2866,7 +3607,7 @@ impl Desktop {
             })
     }
 
-    fn preview_source_button(&self, compact: bool, cx: &mut Context<Self>) -> Div {
+    fn preview_source_button(&self, cx: &mut Context<Self>) -> Div {
         // Enter remains bound to inspect_source. Only this explicitly relabeled
         // button changes to conversion once an eligible preview is on screen.
         let start = self.online
@@ -2883,10 +3624,9 @@ impl Desktop {
         };
         h_flex().items_center().child(
             theme::disabled_when(primary_pill("preview-source"), disabled, cx)
-                .h(HERO_CONTROL)
+                .h(CONTROL_HEIGHT)
                 .icon(icons::arrow_forward())
-                .when(!compact || start, |button| button.label(label))
-                .when(compact && !start, |button| button.w(HERO_CONTROL).px_0())
+                .label(label)
                 .accessibility_label(label)
                 .tooltip(label)
                 .track_focus(&self.import_submit_focus)
@@ -2920,7 +3660,7 @@ impl Desktop {
         submitted_input_task(state.draft()?, &state.tasks, &self.value(Field::Source, cx))
     }
 
-    /// The source card and hero share one definition of the submitted task.
+    /// The source form and preview share one definition of the submitted task.
     fn workbench_linked_task(&self, cx: &App) -> Option<&workspace::TaskRecord> {
         let opening_result = self.reading && self.following_conversion.is_some();
         self.current_input_task(cx).filter(|task| {
@@ -2937,13 +3677,14 @@ impl Desktop {
     }
 
     /// Called by explicit workbench entry and initial restoration, never render.
-    /// Terminal tasks remain in the task list and recent notes after their input
+    /// Terminal tasks remain in the task list and course library after their input
     /// has become a fresh form; an in-flight or edited input is never replaced.
     pub(super) fn prepare_workbench_input(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.sync_proofread_editor(window, cx);
         if self.pending_conversion.is_some() || self.following_conversion.is_some() {
             return true;
         }
@@ -2985,7 +3726,7 @@ impl Desktop {
                 self.invalidate_source();
                 self.restore_draft(window, cx);
                 self.source_editor_open = true;
-                self.generation_options_open = false;
+                self.generation_options_open = true;
                 true
             }
             Err(error) => {
@@ -3006,43 +3747,17 @@ impl Desktop {
             .current_input_task(cx)
             .filter(|task| task.state == workspace::TaskState::Cancelled)
             .map(|task| (task.id.clone(), course2md::tr!("任务已取消").to_owned()));
-        let compact = is_compact(window);
         let input = v_flex()
             .w_full()
             .min_w_0()
             .gap_4()
-            .when(!self.online, |input| input.child(self.source_kind_tabs(cx)))
+            .child(self.source_kind_tabs(cx))
             .child(self.box_source_input(window, cx));
         let mut view = v_flex()
             .gap(SECTION_GAP)
             .w_full()
             .min_w_0()
-            .max_w(rems(WORKBENCH_WIDTH / 14.))
-            .mx_auto()
-            .child(
-                v_flex()
-                    .w_full()
-                    .items_center()
-                    .gap(rems(8. / 14.))
-                    .child(
-                        accessible_text("workbench-title", course2md::tr!("把视频整理成笔记"))
-                            .role(Role::Heading)
-                            .text_size(rems(if compact { 28. / 14. } else { 36. / 14. }))
-                            .line_height(rems(if compact { 36. / 14. } else { 44. / 14. }))
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(
-                        div()
-                            .text_center()
-                            .text_size(if compact { TEXT_BODY } else { TEXT_LEAD })
-                            .line_height(rems(24. / 14.))
-                            .text_color(color(GRAY))
-                            .child(course2md::tr!(
-                                "粘贴链接或拖入本地视频，自动生成带截图的笔记"
-                            )),
-                    ),
-            )
-            .child(input);
+            .child(self.box_source_details(window, cx));
         if let Some((id, message)) = cancelled_notice {
             view = view.child(info_callout(
                 SharedString::from(format!("cancelled-input-task-{id}")),
@@ -3071,15 +3786,14 @@ impl Desktop {
                 _ => self.box_task_attention(&task, cx),
             };
             view = view.child(
-                // The current task is the workbench's hero object, as on the
-                // canvas's progress board: large radius and raised surface.
+                // Recovery stays beside the source that created this task.
                 task_view
-                    .p(rems(28. / 14.))
-                    .rounded(RADIUS_HERO)
+                    .p(rems(20. / 14.))
+                    .rounded(RADIUS_CARD)
                     .bg(color(SURFACE))
                     .border_1()
                     .border_color(color(CARD_LINE))
-                    .shadow(shadow_hero()),
+                    .shadow(shadow_card()),
             );
         } else if !has_linked_task {
             let text_required = self.subtitle_attention_required();
@@ -3102,7 +3816,14 @@ impl Desktop {
         }
         let scale = f32::from(window.rem_size()) / 14.;
         let column = crate::views::shell_content_width(Page::New, window);
-        let wide = column >= 960. * scale;
+        // Use the remaining content pane after the global sidebar, not the
+        // outer window. Large type switches to a readable stacked form.
+        let wide = column >= 820. * scale;
+        let source_scroll = window
+            .use_keyed_state("workbench-source-scroll", cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
+        let options_scroll = self.scrolls[Page::New as usize].clone();
         let show_options = self.generation_options_open
             && self.preview_cancel.is_none()
             && self.source_candidates.is_empty()
@@ -3110,16 +3831,17 @@ impl Desktop {
                 .current_input_task(cx)
                 .is_none_or(|task| task.state.finished());
         let active = self.workbench_active_tasks_section(window, cx);
-        let recent = self.recent_notes_section(cx);
         let options = if show_options {
             Some(
                 v_flex()
                     .w_full()
                     .min_w_0()
-                    .p(SECTION_GAP)
+                    .p(rems(20. / 14.))
                     .gap(SECTION_GAP)
-                    .rounded(RADIUS_HERO)
+                    .rounded(RADIUS_CARD)
                     .bg(color(SURFACE))
+                    .border_1()
+                    .border_color(color(CARD_LINE))
                     .child(
                         v_flex()
                             .w_full()
@@ -3131,9 +3853,9 @@ impl Desktop {
                                     .child(
                                         div()
                                             .flex_1()
-                                            .text_size(rems(24. / 14.))
-                                            .line_height(rems(32. / 14.))
-                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_size(TEXT_TITLE)
+                                            .line_height(rems(26. / 14.))
+                                            .font_weight(FontWeight::SEMIBOLD)
                                             .child(course2md::tr!("处理选项")),
                                     )
                                     .child(
@@ -3154,6 +3876,8 @@ impl Desktop {
                     .child(div().h(px(1.)).bg(color(HAIRLINE)))
                     .child(self.import_ai_options(cx))
                     .child(div().h(px(1.)).bg(color(HAIRLINE)))
+                    .child(self.import_study_options(cx))
+                    .child(div().h(px(1.)).bg(color(HAIRLINE)))
                     .child(self.import_destination(cx))
                     .child(self.import_exports(cx))
                     .child(
@@ -3170,55 +3894,63 @@ impl Desktop {
         } else {
             None
         };
-        let mut lower = div()
+        let view = view.when_some(active, |view, active| view.child(active));
+        let mut form = div()
             .flex()
             .w_full()
+            .flex_1()
+            .min_h_0()
             .min_w_0()
             .gap(SECTION_GAP)
-            .items_start();
+            .items_stretch();
         if wide {
-            if let Some(recent) = recent {
-                lower = lower.child(div().flex_1().min_w_0().child(recent));
-            }
+            form = form.child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .gap(SECTION_GAP)
+                    .child(input.flex_shrink_0())
+                    .child(workbench_scroll("workbench-source", view, &source_scroll)),
+            );
             if let Some(options) = options {
-                lower = lower.child(
+                form = form.child(
                     div()
-                        .w(rems(if column < 1100. * scale {
-                            360. / 14.
-                        } else {
-                            400. / 14.
-                        }))
+                        .flex()
+                        .w(rems(360. / 14.))
                         .flex_shrink_0()
-                        .child(options),
+                        .min_h_0()
+                        .child(workbench_scroll(
+                            "workbench-options",
+                            options,
+                            &options_scroll,
+                        )),
                 );
             }
         } else {
-            lower = lower.flex_col();
-            if let Some(options) = options {
-                lower = lower.child(options);
-            }
-            if let Some(recent) = recent {
-                lower = lower.child(recent);
-            }
+            // Stacked windows keep the source input above the bounded lower
+            // pane, so every option remains reachable without losing context.
+            form = form
+                .flex_col()
+                .child(input.flex_shrink_0())
+                .child(workbench_scroll(
+                    "workbench-stacked",
+                    view.children(options),
+                    &options_scroll,
+                ));
         }
-        let mut view = v_flex()
+        let view = v_flex()
             .w_full()
+            .h_full()
             .min_w_0()
-            .pt(rems(if compact { 40. / 14. } else { 56. / 14. }))
-            .gap(rems(if compact { 38. / 14. } else { 46. / 14. }))
-            .child(view)
-            .when_some(active, |view, active| view.child(active))
-            .child(lower);
-        if let Some(error) = &self.workspace_error {
-            view = view.child(motion::enter(
-                text_id("workspace-error", error),
-                v_flex()
-                    .p_4()
-                    .rounded(RADIUS_CARD)
-                    .bg(color(DANGER_BG))
-                    .child(issue(error.clone())),
-            ));
-        }
+            .min_h_0()
+            .pt(px(24.))
+            .pb_4()
+            .gap(SECTION_GAP)
+            .child(
+                theme::page_heading("workbench-title", course2md::tr!("添加课程")).flex_shrink_0(),
+            )
+            .child(form);
         // The whole workbench accepts a dropped video, not just the local tab.
         view.on_drop(
             cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
@@ -3528,12 +4260,142 @@ impl Desktop {
 mod tests {
     use super::{
         ConversionFollow, ConversionGate, GateInputs, automatic_subtitle_fallback,
-        completed_input_task, conversion_gate, submitted_input_task, subtitle_needs_confirmation,
-        uses_speech,
+        completed_input_task, conversion_gate, enable_study_plan, import_study_catalog_matches,
+        submitted_input_task, subtitle_needs_confirmation, uses_speech,
     };
     use crate::{source, workspace};
     use course2md::config::TranscriptSource;
     use course2md::subtitle::{CachedSubtitle, SubtitleEvidence, SubtitleReadError};
+    use gpui::{
+        Context, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
+        Styled as _, TestAppContext, Window, div, point, px,
+    };
+
+    #[test]
+    fn enabling_study_fills_missing_choices_without_replacing_course_edits() {
+        let mut plan = workspace::StudyPlan::default();
+        plan.model = Some(String::new());
+        enable_study_plan(
+            &mut plan,
+            "saved teaching default",
+            Some(("version-1", "model-1")),
+        );
+        assert!(plan.enabled);
+        assert_eq!(plan.prompt, "saved teaching default");
+        assert_eq!(plan.service.as_deref(), Some("version-1"));
+        assert_eq!(plan.model.as_deref(), Some("model-1"));
+
+        plan.enabled = false;
+        plan.prompt = "course-specific teaching".into();
+        plan.model = Some("course-model".into());
+        enable_study_plan(
+            &mut plan,
+            "changed future default",
+            Some(("version-2", "model-2")),
+        );
+        assert_eq!(plan.prompt, "course-specific teaching");
+        assert_eq!(plan.service.as_deref(), Some("version-1"));
+        assert_eq!(plan.model.as_deref(), Some("course-model"));
+    }
+
+    #[test]
+    fn study_catalog_response_belongs_to_enabled_draft_and_selected_service() {
+        let mut draft = workspace::Draft::new(true, "library".into(), Default::default());
+        draft.study.enabled = true;
+        draft.study.service = Some("codex-version".into());
+        let id = draft.id.clone();
+        assert!(import_study_catalog_matches(
+            Some(&draft),
+            &id,
+            "codex-version"
+        ));
+        assert!(!import_study_catalog_matches(
+            Some(&draft),
+            "previous-course",
+            "codex-version"
+        ));
+        assert!(!import_study_catalog_matches(
+            Some(&draft),
+            &id,
+            "previous-service"
+        ));
+        draft.study.enabled = false;
+        assert!(!import_study_catalog_matches(
+            Some(&draft),
+            &id,
+            "codex-version"
+        ));
+        assert!(!import_study_catalog_matches(None, &id, "codex-version"));
+    }
+
+    struct PaneHarness {
+        scroll: ScrollHandle,
+    }
+
+    impl Render for PaneHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .flex_col()
+                .w(px(900.))
+                .h(px(500.))
+                .child(
+                    div()
+                        .h(px(56.))
+                        .flex_shrink_0()
+                        .debug_selector(|| "fixed-heading".into()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_h_0()
+                        .items_stretch()
+                        .child(
+                            div()
+                                .w(px(500.))
+                                .flex_shrink_0()
+                                .debug_selector(|| "fixed-source".into()),
+                        )
+                        .child(
+                            super::workbench_scroll(
+                                "options-fixture",
+                                div().h(px(1400.)).debug_selector(|| "long-options".into()),
+                                &self.scroll,
+                            )
+                            .debug_selector(|| "options-viewport".into()),
+                        ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn processing_options_scroll_without_moving_source_or_heading(cx: &mut TestAppContext) {
+        let scroll = ScrollHandle::new();
+        let (_view, cx) = cx.add_window_view(|_, _| PaneHarness {
+            scroll: scroll.clone(),
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let heading = cx.debug_bounds("fixed-heading").unwrap();
+        let source = cx.debug_bounds("fixed-source").unwrap();
+        let viewport = cx.debug_bounds("options-viewport").unwrap();
+        let content = cx.debug_bounds("long-options").unwrap();
+        assert!(viewport.size.height <= px(444.));
+        assert!(
+            scroll.max_offset().y >= px(900.),
+            "long options must have their own scroll extent"
+        );
+        scroll.set_offset(point(px(0.), px(-500.)));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(cx.debug_bounds("fixed-heading").unwrap(), heading);
+        assert_eq!(cx.debug_bounds("fixed-source").unwrap(), source);
+        assert_eq!(cx.debug_bounds("options-viewport").unwrap(), viewport);
+        assert!(cx.debug_bounds("long-options").unwrap().top() < content.top() - px(400.));
+    }
 
     /// A pending Start for revision 7 with every prerequisite met.
     fn ready() -> GateInputs {
@@ -3890,6 +4752,7 @@ mod tests {
             config: Default::default(),
             asr_service: None,
             ai_service: None,
+            study: Default::default(),
         };
         let (id, _) = state.enqueue(plan.clone(), None).unwrap();
         let draft = state.draft_mut().unwrap();
@@ -3951,6 +4814,7 @@ mod tests {
                 config: Default::default(),
                 asr_service: None,
                 ai_service: None,
+                study: Default::default(),
             },
             state: workspace::TaskState::Uncertain,
             intent: workspace::Intent::Pause,
@@ -3967,6 +4831,8 @@ mod tests {
             logs: Vec::new(),
             blocked: Vec::new(),
             resend: Vec::new(),
+            study: Default::default(),
+            study_meter: None,
         };
         let mut recovery = original.clone();
         recovery.id = "recovery".into();
@@ -4023,6 +4889,9 @@ mod tests {
         assert!(super::retired_input_task(&draft, &tasks, &draft.input).is_none());
         draft = unchanged.clone();
         draft.folder = Some(42);
+        assert!(super::retired_input_task(&draft, &tasks, &draft.input).is_none());
+        draft = unchanged.clone();
+        draft.ai_model = Some("changed-after-submission".into());
         assert!(super::retired_input_task(&draft, &tasks, &draft.input).is_none());
         draft = unchanged;
         assert!(super::retired_input_task(&draft, &tasks, "新视频").is_none());

@@ -78,7 +78,7 @@ fn palette_colors(id: PaletteId) -> [Rgba; COLOR_COUNT] {
         ON_PRIMARY => rgb(p.on_accent),
         // M3 container roles derived from each palette's own accent and text, so
         // every preset keeps its identity (assets/themes/SOURCES.md).
-        SECONDARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.26 } else { 0.24 }),
+        SECONDARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.20 } else { 0.11 }),
         ON_SECONDARY_CONTAINER => blend(
             rgb(p.text),
             rgb(p.accent),
@@ -202,10 +202,14 @@ fn sync_component_theme(dark: bool, cx: &mut App) {
 
 /* ---------- 几何（px，不随字号缩放） ---------- */
 pub const RADIUS_PILL: Pixels = px(999.);
-pub const RADIUS_CARD: Pixels = px(16.);
-/// Settings reference surfaces share a 24px corner radius.
-pub const SETTINGS_CARD_RADIUS: Pixels = px(24.);
-pub const RADIUS_HERO: Pixels = px(28.);
+/// Distinct desktop roles prevent every input, action and navigation item
+/// from reading as the same capsule.
+pub const RADIUS_CONTROL: Pixels = px(10.);
+pub const RADIUS_NAV: Pixels = px(8.);
+pub const RADIUS_CARD: Pixels = px(14.);
+/// Nested settings groups use the same restrained surface family as task cards.
+pub const SETTINGS_CARD_RADIUS: Pixels = px(14.);
+pub const RADIUS_HERO: Pixels = px(22.);
 pub const RADIUS_SMALL: Pixels = px(8.);
 /// Ordinary controls share this height, including padding, at every text scale.
 pub const CONTROL_HEIGHT: Rems = rems(40. / 14.);
@@ -219,7 +223,12 @@ pub const LABEL_INSET: Rems = rems(ICON_SLOT.0 + ICON_GAP.0);
 
 /// The app bar holds one control row with 8px above and below.
 pub fn title_bar_height(window: &Window) -> Pixels {
-    CONTROL_HEIGHT.to_pixels(window.rem_size()) + px(16.)
+    if cfg!(target_os = "windows") {
+        // The system caption is outside the client viewport on Windows.
+        px(0.)
+    } else {
+        CONTROL_HEIGHT.to_pixels(window.rem_size()) + px(16.)
+    }
 }
 
 /// Task dialogs sit below the shared title bar with the page gutter.
@@ -243,10 +252,10 @@ pub const TEXT_BODY: Rems = rems(1.);
 pub const TEXT_TITLE: Rems = rems(1.286);
 pub const TEXT_READER: Rems = rems(1.143);
 /// Main page headline.
-pub const TEXT_DISPLAY: Rems = rems(2.);
+pub const TEXT_DISPLAY: Rems = rems(28. / 14.);
 /// Settings content reads one step larger than navigation and the workbench.
-pub const TEXT_SETTINGS_BODY: Rems = rems(16. / 14.);
-pub const TEXT_SETTINGS_AUX: Rems = TEXT_BODY;
+pub const TEXT_SETTINGS_BODY: Rems = rems(15. / 14.);
+pub const TEXT_SETTINGS_AUX: Rems = rems(13. / 14.);
 
 /// Gives a shared control the settings reading size. Controls size their own
 /// labels, so the role cannot be inherited from the enclosing settings card.
@@ -290,20 +299,13 @@ pub fn page_heading(
 fn shadow_color(alpha: f32) -> gpui::Hsla {
     gpui::hsla(0., 0., 0., alpha)
 }
-/// Hero input card: near 0/1/2 @5% + far 0/16/40 @8%.
-pub fn shadow_hero() -> Vec<gpui::BoxShadow> {
-    vec![
-        gpui::BoxShadow::new(px(0.), px(1.), shadow_color(0.05)).blur_radius(px(2.)),
-        gpui::BoxShadow::new(px(0.), px(16.), shadow_color(0.08)).blur_radius(px(40.)),
-    ]
-}
-/// M3 level-1 card elevation: 0/1/2 @6%, kept faint so tone carries the layer.
+/// Resting cards rely on surface tone; a faint shadow separates nearby layers.
 pub fn shadow_card() -> Vec<gpui::BoxShadow> {
-    vec![gpui::BoxShadow::new(px(0.), px(1.), shadow_color(0.06)).blur_radius(px(2.))]
+    vec![gpui::BoxShadow::new(px(0.), px(2.), shadow_color(0.035)).blur_radius(px(10.))]
 }
-/// Overlay panels and dialogs: 0/12/32 @16%.
+/// Overlays carry more elevation than content while retaining a soft edge.
 pub fn shadow_popover() -> Vec<gpui::BoxShadow> {
-    vec![gpui::BoxShadow::new(px(0.), px(12.), shadow_color(0.16)).blur_radius(px(32.))]
+    vec![gpui::BoxShadow::new(px(0.), px(8.), shadow_color(0.12)).blur_radius(px(28.))]
 }
 
 /// Plain Div text is not exposed by GPUI's native accessibility bridge. Keep labels on
@@ -343,7 +345,7 @@ pub fn semantic_label(
     use gpui::{prelude::*, *};
     div()
         .flex()
-        .items_center()
+        .items_start()
         .min_w_0()
         .gap(ICON_GAP)
         .child(
@@ -351,7 +353,8 @@ pub fn semantic_label(
                 .flex()
                 .items_center()
                 .justify_center()
-                .size(ICON_SLOT)
+                .w(ICON_SLOT)
+                .h(rems(22. / 14.))
                 .flex_shrink_0()
                 .child(icon),
         )
@@ -360,6 +363,7 @@ pub fn semantic_label(
                 .min_w_0()
                 .whitespace_normal()
                 .text_size(TEXT_BODY)
+                .line_height(rems(22. / 14.))
                 .font_weight(FontWeight::SEMIBOLD),
         )
 }
@@ -503,10 +507,10 @@ pub fn control(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button
         .h(CONTROL_HEIGHT)
         .min_h(CONTROL_HEIGHT)
         .min_w(CONTROL_HEIGHT)
-        .rounded(RADIUS_PILL)
+        .rounded(RADIUS_CONTROL)
         .py_0()
         .flex_shrink_0()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .font_weight(gpui::FontWeight::MEDIUM)
 }
 
 /// A framed single-line field. Multiline editors and embedded find text use
@@ -518,14 +522,14 @@ pub fn text_input(
     gpui_component::input::Input::new(state)
         .h(CONTROL_HEIGHT)
         .min_h(CONTROL_HEIGHT)
-        .rounded(RADIUS_PILL)
+        .rounded(RADIUS_CONTROL)
         .px(rems(16. / 14.))
         .text_size(TEXT_BODY)
 }
 
 /* ---------- 共享控件 ---------- */
 
-/// M3 list section title: primary-colored, semibold, above the list it names.
+/// Neutral section heading keeps the accent reserved for actions and focus.
 /// Shared by settings groups, task groups and the workbench's recent notes.
 pub fn section_title(
     id: impl Into<gpui::ElementId>,
@@ -537,7 +541,7 @@ pub fn section_title(
         .text_size(rems(15. / 14.))
         .line_height(rems(22. / 14.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(color(ACCENT))
+        .text_color(color(INK))
 }
 
 /// M3 search bar: a filled, borderless pill with a leading search icon. The
@@ -559,7 +563,7 @@ pub fn search_field(
         .h(height)
         .px(rems(16. / 14.))
         .gap(rems(10. / 14.))
-        .rounded(RADIUS_PILL)
+        .rounded(RADIUS_CONTROL)
         .bg(color(SURFACE_HIGH))
         .border_2()
         .border_color(if focused {
@@ -816,8 +820,48 @@ pub fn nav_action(
         )
     };
     custom_fill(control(id), bg, fg, true, cx)
+        .rounded(RADIUS_NAV)
         .px(rems(1.))
         .gap(ICON_GAP)
+}
+
+/// Sidebar destinations align the complete icon/label cluster to one ruler.
+/// Button's built-in label slot is centered, so use one full-width shared row.
+pub fn sidebar_action(
+    id: impl Into<gpui::ElementId>,
+    label: &'static str,
+    icon: gpui_component::Icon,
+    selected: bool,
+    compact: bool,
+    cx: &App,
+) -> gpui_component::button::Button {
+    use gpui::{prelude::*, *};
+    nav_action(id, selected, cx)
+        .w_full()
+        .min_h(CONTROL_HEIGHT)
+        .accessibility_label(label)
+        .tooltip(label)
+        .when(compact, |button| button.px_0())
+        .child(
+            gpui_component::h_flex()
+                .w_full()
+                .min_w_0()
+                .gap(ICON_GAP)
+                .when(compact, |row| row.justify_center())
+                .child(icon.size(ICON_SLOT).flex_shrink_0())
+                .when(!compact, |row| {
+                    row.child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .whitespace_normal()
+                            .text_size(TEXT_BODY)
+                            .line_height(rems(22. / 14.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(label),
+                    )
+                }),
+        )
 }
 
 /// M3 filled tonal button: a secondary action that still carries weight,
@@ -887,7 +931,7 @@ pub fn filter_chip(
         .border_color(if selected {
             color(SECONDARY_CONTAINER)
         } else {
-            color(CONTROL)
+            color(HAIRLINE)
         });
     if selected {
         chip.icon(crate::icons::check())
@@ -1030,7 +1074,7 @@ pub fn badge(kind: BadgeKind) -> gpui::Div {
         .min_h(px(24.))
         .px(px(8.))
         .py(px(3.))
-        .rounded_full()
+        .rounded(RADIUS_SMALL)
         .bg(color(bg))
         .text_color(color(text))
         .text_size(TEXT_AUX)
@@ -1042,8 +1086,8 @@ pub fn badge(kind: BadgeKind) -> gpui::Div {
     view
 }
 
-/// A floating label for an outlined control. The control owns its border;
-/// supporting status stays in normal flow below it and can grow naturally.
+/// A visible top label belongs to its field, without cutting the field's border.
+/// Long translations and scaled type flow naturally instead of overlapping it.
 pub fn outlined_field_label(
     id: impl Into<gpui::ElementId>,
     label: impl Into<gpui::SharedString>,
@@ -1052,23 +1096,19 @@ pub fn outlined_field_label(
 ) -> gpui::Div {
     use gpui::{prelude::*, *};
     div()
-        .relative()
+        .flex()
+        .flex_col()
         .w_full()
         .min_w_0()
-        .mt(rems(8. / 14.))
-        .child(content)
+        .gap(rems(7. / 14.))
         .child(
             accessible_text(id, label)
-                .absolute()
-                .top(rems(-8. / 14.))
-                .left(rems(12. / 14.))
-                .px(rems(4. / 14.))
-                .bg(color(SURFACE))
                 .text_color(color(GRAY))
                 .text_size(label_size)
-                .line_height(rems(16. / 14.))
-                .font_weight(FontWeight::NORMAL),
+                .line_height(rems(20. / 14.))
+                .font_weight(FontWeight::MEDIUM),
         )
+        .child(content)
 }
 
 /// Preference switches share the accent and scale their geometry with UI text.
@@ -1080,7 +1120,44 @@ pub fn preference_switch(switch: gpui_component::switch::Switch) -> gpui_compone
 pub fn processing_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
     preference_switch(switch)
         .reference_geometry()
-        .track_height(rems(32. / 14.))
+        .track_height(rems(26. / 14.))
+}
+
+/// Standalone empty/loading content uses the remaining page space rather than
+/// borrowing a list row's height. Navigation and the page heading stay outside.
+pub fn viewport_state(
+    id: impl Into<gpui::ElementId>,
+    scroll: &gpui::ScrollHandle,
+    content: impl gpui::IntoElement,
+) -> gpui::Div {
+    use gpui::{prelude::*, *};
+    div()
+        .relative()
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .w_full()
+        .child(
+            div()
+                .id(id)
+                .flex()
+                .flex_col()
+                .size_full()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(scroll)
+                .p(rems(24. / 14.))
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(rems(480. / 14.))
+                        .flex_shrink_0()
+                        .mx_auto()
+                        .my_auto()
+                        .child(content),
+                ),
+        )
+        .child(crate::backend::vertical_scrollbar(scroll))
 }
 
 /// GPUI Component's Root resets rem size from Theme on every render. Update that

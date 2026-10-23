@@ -2,7 +2,50 @@
 use super::*;
 use course2md::execution::Component;
 
+use super::service_form::{ai_service_billing_hint, ai_service_route_label};
+
 impl Desktop {
+    /// Connecting an account does not invent a model or replace the AI default.
+    /// The existing editor lets the person choose an account-listed model and Save.
+    pub(crate) fn open_codex_service_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let usable = |version: &&ServiceVersion| {
+            version.config.protocol == ServiceProtocol::CodexResponses
+                && !self
+                    .preferences
+                    .service_retired_in_snapshot(&version.service_id)
+        };
+        let version = self
+            .preferences
+            .default_refs()
+            .llm
+            .as_deref()
+            .and_then(|id| self.preferences.version(id))
+            .filter(usable)
+            .cloned()
+            .or_else(|| {
+                self.preferences
+                    .latest_versions()
+                    .into_values()
+                    .find(|version| usable(&version))
+            });
+        let draft = version
+            .as_ref()
+            .map(ServiceDraft::from_version)
+            .unwrap_or_else(|| {
+                let mut draft = ServiceDraft::new(ServicePurpose::Ai);
+                draft.protocol = ServiceProtocol::CodexResponses;
+                draft.authentication = Authentication::None;
+                draft.address = preferences::CODEX_ADDRESS.into();
+                draft.name = ai_service_route_label(draft.protocol).into();
+                draft
+            });
+        self.open_service_draft(draft, None, None, window, cx);
+    }
+
     /// Ordinary service editing with explicit Save and Cancel actions.
     pub(super) fn service_editor_card(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let Some(editor) = &self.settings_ui.editor else {
@@ -131,7 +174,11 @@ impl Desktop {
                 } else {
                     ""
                 };
-                format!("{}{state}", version.config.model)
+                if purpose == ServicePurpose::Ai {
+                    format!("{}{state}", ai_service_route_label(version.config.protocol))
+                } else {
+                    format!("{}{state}", version.config.model)
+                }
             });
             let menu_choices = choices
                 .into_iter()
@@ -212,10 +259,15 @@ impl Desktop {
                         |menu, (version, state)| {
                             let id = version.id.clone();
                             let name = version.config.name.clone();
-                            let detail = format!(
-                                "{} · {} · v{}",
-                                version.config.model, version.config.endpoint, version.number
-                            );
+                            let detail = if purpose == ServicePurpose::Ai {
+                                ai_service_route_label(version.config.protocol).to_owned()
+                            } else {
+                                format!(
+                                    "{} · {} · v{}",
+                                    version.config.model, version.config.endpoint, version.number
+                                )
+                            };
+                            let model = course2md::tr!("模型：{}", version.config.model);
                             let state = state.clone();
                             let entity = entity.clone();
                             menu.item(
@@ -232,6 +284,13 @@ impl Desktop {
                                                 .text_size(TEXT_SETTINGS_AUX)
                                                 .child(detail.clone()),
                                         )
+                                        .when(purpose == ServicePurpose::Ai, |view| {
+                                            view.child(
+                                                div()
+                                                    .text_size(TEXT_SETTINGS_AUX)
+                                                    .child(model.clone()),
+                                            )
+                                        })
                                         .when(!state.is_empty(), |view| {
                                             view.child(
                                                 div()
@@ -271,44 +330,76 @@ impl Desktop {
                     .child(self.reveal_setting(("service-choice-reveal", index), picker)),
             );
         }
-        controls = controls.child(
-            control((
-                "configure-service",
-                purpose as usize * 2 + current_task as usize,
-            ))
-            .settings_text()
-            .icon(if editor_version.is_some() {
-                icons::edit()
-            } else {
-                icons::plus()
-            })
-            .ghost()
-            .when(current_task && editor_version.is_some(), |button| {
+        let edit = control((
+            "configure-service",
+            purpose as usize * 2 + current_task as usize,
+        ))
+        .settings_text()
+        .icon(if editor_version.is_some() {
+            icons::edit()
+        } else {
+            icons::plus()
+        })
+        .ghost()
+        .when(
+            current_task && purpose == ServicePurpose::Speech && editor_version.is_some(),
+            |button| {
                 button
                     .w(rems(48. / 14.))
                     .h(rems(56. / 14.))
                     .px_0()
                     .accessibility_label(course2md::tr!("编辑服务"))
                     .tooltip(course2md::tr!("编辑服务"))
-            })
-            .when(!current_task || editor_version.is_none(), |button| {
+            },
+        )
+        .when(
+            !current_task || purpose == ServicePurpose::Ai || editor_version.is_none(),
+            |button| {
                 button.label(match (purpose, editor_version.is_some()) {
+                    (ServicePurpose::Ai, true) => course2md::tr!("更改服务或模型"),
                     (_, true) => course2md::tr!("编辑"),
                     (ServicePurpose::Speech, false) => course2md::tr!("添加语音服务"),
                     (ServicePurpose::Ai, false) => course2md::tr!("添加 AI 服务"),
                 })
-            })
-            .self_start()
-            .mr(-crate::theme::QUIET_INSET)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if current_task {
-                    this.open_task_service_editor(purpose, window, cx)
-                } else {
-                    this.open_settings_service_editor(purpose, editor_version.clone(), window, cx);
-                }
-            })),
-        );
-        view = view.child(controls);
+            },
+        )
+        .self_start()
+        .mr(-crate::theme::QUIET_INSET)
+        .on_click(cx.listener(move |this, _, window, cx| {
+            if current_task {
+                this.open_task_service_editor(purpose, window, cx)
+            } else {
+                this.open_settings_service_editor(purpose, editor_version.clone(), window, cx);
+            }
+        }));
+        view = if purpose == ServicePurpose::Ai && current_version.is_some() {
+            view.child(controls)
+                .when_some(current_version.as_ref(), |view, version| {
+                    view.child(
+                        text(
+                            ("service-selected-model", current_task as usize),
+                            course2md::tr!("模型：{}", version.config.model),
+                        )
+                        .w_full()
+                        .min_w_0()
+                        .whitespace_normal(),
+                    )
+                    .child(
+                        text(
+                            ("service-selected-billing", current_task as usize),
+                            ai_service_billing_hint(version.config.protocol),
+                        )
+                        .w_full()
+                        .min_w_0()
+                        .whitespace_normal()
+                        .text_size(TEXT_SETTINGS_AUX)
+                        .text_color(color(GRAY)),
+                    )
+                })
+                .child(edit)
+        } else {
+            view.child(controls.child(edit))
+        };
         if current_task
             && self
                 .workspace
@@ -411,7 +502,7 @@ impl Desktop {
             )
         }
     }
-    fn bind_service(
+    pub(crate) fn bind_service(
         &mut self,
         purpose: ServicePurpose,
         id: Option<String>,
@@ -429,7 +520,10 @@ impl Desktop {
                             .context(course2md::tr!("找不到当前笔记"))?;
                         match purpose {
                             ServicePurpose::Speech => draft.asr_service = id,
-                            ServicePurpose::Ai => draft.ai_service = id,
+                            ServicePurpose::Ai => {
+                                draft.ai_service = id;
+                                draft.ai_model = None;
+                            }
                         };
                         Ok(())
                     })
@@ -926,7 +1020,23 @@ impl Desktop {
                 ),
             ),
         );
-        if editor.target.is_some() {
+        if protocol.purpose() == ServicePurpose::Ai {
+            connection = connection.detail(
+                v_flex().px(rems(20. / 14.)).pb(rems(16. / 14.)).gap_2()
+                    .child(text("service-model-scope", course2md::tr!(
+                        "保存会更新这个服务的可选配置；已提交任务和其他已固定配置保留原模型。"
+                    )).text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))
+                    .when(inline, |view| view.child(text("service-default-scope", if editor.also_default {
+                        course2md::tr!("保存后设为默认 AI 服务，用于新任务。")
+                    } else {
+                        course2md::tr!("保存后可在每个视频中选择；当前默认服务保持不变。")
+                    }).text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY))))
+                    .when(protocol != ServiceProtocol::CodexResponses, |view| view.child(
+                        text("service-model-billing", ai_service_billing_hint(protocol))
+                            .text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))),
+            );
+        }
+        if editor.repair_task.is_none() {
             connection = connection.child(
                 self.setting_preference(
                     course2md::tr!("同时设为默认服务"),
@@ -1496,7 +1606,7 @@ impl Desktop {
             return;
         }
         let inline = target.is_none() && !repairing;
-        let scope = if !repairing && (target.is_none() || editor.also_default) {
+        let scope = if !repairing && editor.also_default {
             BindingScope::Defaults
         } else {
             BindingScope::CurrentTask
@@ -1552,7 +1662,10 @@ impl Desktop {
                             (scope == BindingScope::CurrentTask).then(|| version.id.clone());
                         match version.config.protocol.purpose() {
                             ServicePurpose::Speech => draft.asr_service = selected,
-                            ServicePurpose::Ai => draft.ai_service = selected,
+                            ServicePurpose::Ai => {
+                                draft.ai_service = selected;
+                                draft.ai_model = None;
+                            }
                         };
                         Ok(())
                     })
@@ -1886,6 +1999,7 @@ impl Desktop {
                 }
             }
         }
+        self.sync_proofread_activity(cx);
         cx.notify();
     }
 }

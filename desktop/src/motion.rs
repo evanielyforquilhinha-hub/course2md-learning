@@ -7,11 +7,11 @@ use gpui::{prelude::*, *};
 use gpui_component::{Sizable, h_flex, v_flex};
 use std::time::Duration;
 
-pub const ENTER_MS: u64 = 160;
+pub const ENTER_MS: u64 = 180;
 /// Value changes and state entrances share the overlay show/dismiss range.
-pub const VALUE_MS: u64 = 200;
+pub const VALUE_MS: u64 = 180;
 pub const SELECTION_MS: u64 = 180;
-pub const PALETTE_MS: u64 = 280;
+pub const PALETTE_MS: u64 = 240;
 const SPINNER_TURN_MS: u64 = 1000;
 const INDETERMINATE_SWEEP_MS: u64 = 1400;
 
@@ -51,7 +51,7 @@ pub fn state_enter<E: IntoElement + Styled + 'static>(
         move |view, t| {
             #[cfg(feature = "performance")]
             crate::performance::record_motion(trace_id.clone(), 1., t);
-            view.relative().top(px(8. * (1. - t))).opacity(t)
+            view.relative().top(px(4. * (1. - t))).opacity(t)
         },
     )
     .into_any_element()

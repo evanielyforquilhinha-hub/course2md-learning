@@ -13,7 +13,9 @@ mod focus_scroll;
 mod i18n;
 mod icons;
 mod import_ui;
+mod legacy_settings;
 mod library_ui;
+mod local_document;
 mod model_discovery;
 mod motion;
 mod notes;
@@ -32,6 +34,8 @@ mod settings_ui;
 mod source;
 mod storage;
 mod storage_ui;
+mod study_progress;
+mod study_ui;
 mod task_ui;
 mod theme;
 mod views;
@@ -39,7 +43,7 @@ mod workspace;
 use backend::{Completed, Course, Event, Job};
 use gpui::{prelude::*, *};
 use gpui_component::{
-    input::{InputEvent, InputState},
+    input::{InputEvent, InputState, TextareaState},
     *,
 };
 use std::{
@@ -203,6 +207,7 @@ struct Desktop {
     onboarding: onboarding::State,
     storage_ui: storage_ui::State,
     reader_ui: reader_ui::State,
+    study_ui: study_ui::State,
     workspace: Option<workspace::Workspace>,
     workspace_error: Option<String>,
     preference_defaults_pending: bool,
@@ -271,6 +276,8 @@ struct Desktop {
     environment: Option<backend::Environment>,
     scrolls: [ScrollHandle; 5],
     inputs: BTreeMap<Field, Entity<InputState>>,
+    study_import: import_ui::StudyImportState,
+    proofread_import: import_ui::ProofreadImportState,
     config: course2md::settings::ConfigFile,
     task_options: ConversionOptions,
     settings_options: ConversionOptions,
@@ -441,14 +448,17 @@ impl Desktop {
     }
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let configuration_directory = course2md::config::config_dir();
-        let message = None;
-        // Fresh installs bootstrap managed local storage so the welcome screen does not
-        // synchronously access a protected Documents folder before the user chooses a location.
-        let output = configuration_directory.join("desktop-local-library");
-        let preferences = preferences::Store::open(
-            configuration_directory.join("desktop-preferences"),
+        let imported = legacy_settings::bootstrap(
+            &configuration_directory,
             credentials::system_vault(configuration_directory.join("desktop-credentials.json")),
         );
+        let message = imported.message;
+        // Fresh installs bootstrap managed local storage so the welcome screen does not
+        // synchronously access a protected Documents folder before the user chooses a location.
+        let output = imported
+            .library
+            .unwrap_or_else(|| configuration_directory.join("desktop-local-library"));
+        let preferences = imported.store;
         // Inputs and the first frame read the catalog immediately, so the
         // persisted language must be active before they are constructed.
         i18n::apply(preferences.application().language);
@@ -481,6 +491,9 @@ impl Desktop {
                 )
             })
             .collect();
+        let study_prompt = cx.new(|cx| TextareaState::new(window, cx).rows(12));
+        let study_model = cx.new(|cx| InputState::new(window, cx));
+        let proofread_model = cx.new(|cx| InputState::new(window, cx));
         let mut subscriptions: Vec<Subscription> = inputs
             .iter()
             .map(|(field, input)| {
@@ -525,6 +538,25 @@ impl Desktop {
                 })
             })
             .collect();
+        subscriptions.push(
+            cx.subscribe(&study_prompt, |this: &mut Self, _, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.persist_study_editor(cx);
+                }
+            }),
+        );
+        subscriptions.push(cx.subscribe(&study_model, |this: &mut Self, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.persist_study_editor(cx);
+            }
+        }));
+        subscriptions.push(
+            cx.subscribe(&proofread_model, |this: &mut Self, _, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.persist_proofread_editor(cx);
+                }
+            }),
+        );
         subscriptions.push(cx.subscribe_in(
             &inputs[&Field::Source],
             window,
@@ -593,6 +625,7 @@ impl Desktop {
             settings_ui,
             onboarding,
             reader_ui,
+            study_ui: Default::default(),
             storage_ui: Default::default(),
             workspace,
             workspace_error,
@@ -602,7 +635,7 @@ impl Desktop {
             draft_loading: false,
             draft_deadline: None,
             quit_deadline: None,
-            page: Page::New,
+            page: Page::Library,
             online: true,
             last_source_input: String::new(),
             completed_source: None,
@@ -651,12 +684,14 @@ impl Desktop {
             result_tab: 0,
             settings_tab: settings_ui::SettingsTab::Appearance,
             source_editor_open: false,
-            generation_options_open: false,
+            generation_options_open: true,
             validation_attempt: 0,
             show_options: false,
             environment: None,
             scrolls: std::array::from_fn(|_| ScrollHandle::new()),
             inputs,
+            study_import: import_ui::StudyImportState::new(study_prompt, study_model),
+            proofread_import: import_ui::ProofreadImportState::new(proofread_model),
             desktop_settings: config.desktop.clone(),
             last_tick: Instant::now(),
             config,
@@ -716,6 +751,7 @@ impl Desktop {
         this.refresh_account(cx);
         this.refresh_environment(cx);
         this.refresh_library(cx);
+        this.resume_pending_studies(cx);
         if !this.preferences.application().desktop.setup_completed {
             this.start_onboarding(window, cx);
         }
@@ -795,6 +831,7 @@ impl Desktop {
                 self.draft_loading = true;
                 self.inputs[&Field::Title].update(cx, |state, cx| state.set_value("", window, cx));
                 self.draft_loading = false;
+                self.sync_study_editor(window, cx);
                 self.scrolls[Page::New as usize].set_offset(point(px(0.), px(0.)));
                 true
             }
@@ -1578,6 +1615,9 @@ fn main() {
                 window_bounds: Some(WindowBounds::centered(initial_size, cx)),
                 window_min_size: Some(size(px(720.), px(620.))),
                 titlebar: Some(TitlebarOptions {
+                    // Windows owns its familiar minimize/maximize/close controls.
+                    // The transparent custom title bar left those controls unpainted.
+                    appears_transparent: !cfg!(target_os = "windows"),
                     traffic_light_position: Some(point(px(16.), px(19.))),
                     ..TitleBar::title_bar_options()
                 }),
