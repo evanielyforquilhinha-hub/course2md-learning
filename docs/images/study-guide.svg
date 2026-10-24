@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="790" viewBox="0 0 1200 790" role="img" aria-labelledby="title desc">
+  <title id="title">先看课堂画面，再看分步讲解</title>
+  <desc id="desc">讲义结构示意。用自己编写的函数示例说明：上方放课堂画面，下方解释目标、计算步骤和结果。不是软件截图，也不是实际 AI 生成结果。</desc>
+  <rect width="1200" height="790" rx="24" fill="#f6f8fc"/>
+  <g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+    <text x="40" y="51" font-size="25" font-weight="700" fill="#1b283d">看一页图，读懂这一页在讲什么</text>
+    <text x="1160" y="50" text-anchor="end" font-size="15" fill="#788398">讲义结构示意 · 合成内容</text>
+    <rect x="40" y="80" width="1120" height="270" rx="18" fill="#ffffff" stroke="#e1e6ee"/>
+    <text x="72" y="121" font-size="16" fill="#65748c">① 对应的课堂画面 / PPT</text>
+    <text x="72" y="174" font-size="29" font-weight="700" fill="#1b283d">函数：给一个输入，按规则找到输出</text>
+    <text x="72" y="243" font-size="47" font-weight="600" fill="#3767d9">y = 2x + 1</text>
+    <text x="74" y="297" font-size="19" fill="#58677e">例如：把 x = 2 代进去，会得到什么？</text>
+    <g transform="translate(850 150)">
+      <path d="M0 150H235M30 175V-10" stroke="#b9c4d4" stroke-width="2"/>
+      <path d="M132 75V150M30 75H132" fill="none" stroke="#c5d2e7" stroke-width="1.5" stroke-dasharray="5 5"/>
+      <path d="M30 135L215 26.1765" stroke="#3767d9" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="132" cy="75" r="7" fill="#3767d9"/>
+      <text x="147" y="76" font-size="18" fill="#3767d9">(2, 5)</text>
+      <text x="132" y="173" text-anchor="middle" font-size="16" fill="#788398">2</text>
+      <text x="16" y="82" text-anchor="end" font-size="16" fill="#788398">5</text>
+      <text x="223" y="173" font-size="17" fill="#788398">x</text>
+      <text x="7" y="0" font-size="17" fill="#788398">y</text>
+    </g>
+    <rect x="40" y="372" width="1120" height="354" rx="18" fill="#ffffff" stroke="#e1e6ee"/>
+    <text x="72" y="414" font-size="16" fill="#65748c">② 与这一页对应的讲解</text>
+    <text x="72" y="457" font-size="23" font-weight="700" fill="#1b283d">先知道要学什么，再一步一步算</text>
+    <circle cx="89" cy="504" r="16" fill="#eaf0ff"/>
+    <text x="89" y="510" text-anchor="middle" font-size="16" font-weight="700" fill="#3767d9">1</text>
+    <text x="120" y="510" font-size="20" font-weight="600" fill="#1b283d">认清对象</text>
+    <text x="250" y="510" font-size="19" fill="#58677e">x 是输入，y 是输出；这条式子告诉我们怎么算。</text>
+    <line x1="72" y1="537" x2="1128" y2="537" stroke="#edf0f5"/>
+    <circle cx="89" cy="571" r="16" fill="#eaf0ff"/>
+    <text x="89" y="577" text-anchor="middle" font-size="16" font-weight="700" fill="#3767d9">2</text>
+    <text x="120" y="577" font-size="20" font-weight="600" fill="#1b283d">按顺序计算</text>
+    <text x="285" y="577" font-size="19" fill="#58677e">先算 2 × 2 = 4，再算 4 + 1 = 5。</text>
+    <line x1="72" y1="604" x2="1128" y2="604" stroke="#edf0f5"/>
+    <circle cx="89" cy="638" r="16" fill="#e8f4ef"/>
+    <text x="89" y="644" text-anchor="middle" font-size="16" font-weight="700" fill="#278462">3</text>
+    <text x="120" y="644" font-size="20" font-weight="600" fill="#1b283d">对照图像</text>
+    <text x="250" y="644" font-size="19" fill="#58677e">输入为 2，输出为 5，所以图上对应的点是 (2, 5)。</text>
+    <text x="72" y="698" font-size="16" fill="#788398">还可以要求 AI 补上前置概念、说明每一步的理由，或给一道类似的小练习。</text>
+    <text x="40" y="761" font-size="15" fill="#788398">此图解释阅读思路，并非真实课程截图；实际讲义的内容与详略取决于课程、提示词和所选模型。</text>
+  </g>
+</svg>

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
+  <title id="title">把视频课变成方便复习的图文笔记</title>
+  <desc id="desc">添加视频，整理截图和文字，按需使用 AI，最后打开笔记复习。此图为流程示意。</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="#a9b4c5" stroke-width="1.5"/></marker></defs>
+  <rect width="1200" height="330" rx="24" fill="#f6f8fc"/>
+  <g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+    <text x="40" y="51" font-size="25" font-weight="700" fill="#1b283d">一节课，三步整理</text>
+    <text x="1160" y="50" text-anchor="end" font-size="15" fill="#788398">流程示意</text>
+    <rect x="40" y="82" width="344" height="196" rx="18" fill="#ffffff" stroke="#e1e6ee"/>
+    <rect x="428" y="82" width="344" height="196" rx="18" fill="#ffffff" stroke="#e1e6ee"/>
+    <rect x="816" y="82" width="344" height="196" rx="18" fill="#ffffff" stroke="#e1e6ee"/>
+    <g fill="none" stroke="#a9b4c5" stroke-width="2" marker-end="url(#arrow)">
+      <path d="M395 180H416"/>
+      <path d="M783 180H804"/>
+    </g>
+    <rect x="64" y="106" width="42" height="42" rx="12" fill="#eaf0ff"/>
+    <path d="M80 117L92 127L80 137Z" fill="#3767d9"/>
+    <rect x="452" y="106" width="42" height="42" rx="12" fill="#eaf0ff"/>
+    <path d="M464 116H482V138H464ZM469 122H477M469 127H477M469 132H475" fill="none" stroke="#3767d9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="840" y="106" width="42" height="42" rx="12" fill="#e8f4ef"/>
+    <path d="M853 128L859 134L870 120" fill="none" stroke="#278462" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="64" y="187" font-size="25" font-weight="700" fill="#1b283d">1　放进课程</text>
+    <text x="64" y="225" font-size="18" fill="#58677e">粘贴课程链接，或选择本地视频</text>
+    <text x="64" y="252" font-size="16" fill="#7b879a">先预览，再决定怎么处理</text>
+    <text x="452" y="187" font-size="25" font-weight="700" fill="#1b283d">2　留下图和文字</text>
+    <text x="452" y="225" font-size="18" fill="#58677e">提取课堂画面，整理字幕或语音</text>
+    <text x="452" y="252" font-size="16" fill="#7b879a">需要时，再让 AI 帮你校对和讲解</text>
+    <text x="840" y="187" font-size="25" font-weight="700" fill="#1b283d">3　打开就能复习</text>
+    <text x="840" y="225" font-size="18" fill="#58677e">对照图片看文字，按知识点回顾</text>
+    <text x="840" y="252" font-size="16" fill="#7b879a">保留课堂笔记，也可另存学习讲义</text>
+    <text x="40" y="308" font-size="15" fill="#788398">AI 校对、摘要、学习讲义可以分别开关；不必一次全打开。</text>
+  </g>
+</svg>
