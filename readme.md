@@ -1,10 +1,15 @@
-# course2md-learning
+# 视频转笔记
 
-**把视频课，整理成方便复习的图文笔记。**
+**AI 网课学习助手：上面看 PPT，下面读讲解。**
+
+Course2MD Learning · Video to Notes & AI Study Guides
+
+[获取源码](#download) · [让 AI 帮我配置](#agent-setup) · [第一次使用](#first-use) · [开发文档](docs/DEVELOPMENT.md)
 
 看课时听懂了，复习时却想不起老师在哪一页讲过？这个工具会从课程里
-提取画面，把字幕或讲课声音整理成文字。你可以对着图片看讲解，也可以
-让 AI 按你的要求，再整理成一步一步的学习讲义。
+提取画面，把字幕或讲课声音整理成文字。支持 Bilibili、YouTube 和本地
+视频；你可以对着 PPT 截图看讲解，也可以让 AI 按你的要求，再整理成
+一步一步的学习讲义。适合自学网课、补课和考前复习。
 
 基于 [mizorewww/course2md](https://github.com/mizorewww/course2md) 二次开发，
 保留原作者署名与 MIT 许可证，非官方发行版。
@@ -27,10 +32,51 @@
 
 *图片使用专门编写的合成内容，说明阅读方式，不是真实课程截图或实际 AI 生成结果。*
 
-## 第一次怎么用？
+<a id="download"></a>
 
-> **先准备好程序：** 当前仓库提供的是源码，还没有可直接双击安装的
-> 二次开发版安装包。构建和启动步骤见 [开发文档](docs/DEVELOPMENT.md)。
+## 下载与开始
+
+**目前提供源码，尚未发布本修改版的安装包。** 下载 ZIP 是拿到代码，
+还需要准备环境、构建后才能运行。不会配环境，可以把下面的要求交给
+能操作本机终端的 AI 编程助手。
+
+| 你想怎么开始 | 从这里进入 |
+| --- | --- |
+| 让 AI 帮忙下载、配置 | [复制给 Agent 的要求](#agent-setup) |
+| 自己手动下载 | [下载源码 ZIP](https://github.com/evanielyforquilhinha-hub/course2md-learning/archive/refs/heads/main.zip)，解压后看 [下载与配置教程](docs/INSTALL.md) |
+| 用 PowerShell 或 Git 获取 | [查看命令和下一步](docs/INSTALL.md#commands) |
+
+已经装好 Git？在你想存放项目的文件夹打开终端，运行：
+
+```powershell
+git clone https://github.com/evanielyforquilhinha-hub/course2md-learning.git
+```
+
+看到新建的 `course2md-learning` 文件夹后，按 [构建与启动步骤](docs/DEVELOPMENT.md)
+继续。模型、FFmpeg 等运行依赖与个人账号配置，需要另外准备。
+
+<a id="agent-setup"></a>
+
+### 给 AI 编程助手的一段话
+
+复制下面这段话，发给能读写本地文件、运行终端命令的 AI 编程助手：
+
+```text
+请帮我在本机配置“视频转笔记”：
+https://github.com/evanielyforquilhinha-hub/course2md-learning
+先确认保存目录，在新目录下载源码，阅读 AGENTS.md、docs/INSTALL.md
+和 docs/DEVELOPMENT.md；按我的系统检查依赖、构建并用隔离配置启动。
+不要覆盖已有项目或导入私人账号资料，不要调用付费 AI。
+遇到需要我操作的步骤请说明；最后告诉我启动方法、文件位置，
+以及哪些步骤已实际验证。
+```
+
+普通网页聊天不能直接替你安装软件。完整的环境要求、手动步骤和常见
+问题在 [下载与配置教程](docs/INSTALL.md)。
+
+<a id="first-use"></a>
+
+## 第一次怎么用？
 
 程序启动后，按这三步操作：
 
@@ -87,6 +133,7 @@
 
 ## 想了解更多？
 
+- [下载与配置教程](docs/INSTALL.md)：AI 协助、手动下载、PowerShell 和 Git 四种入口。
 - [开发、启动与测试](docs/DEVELOPMENT.md)：从源码构建程序的完整步骤。
 - [仓库目录说明](docs/REPOSITORY_GUIDE.md)：每个文件夹放什么，哪些资料不该提交。
 - [讲义工具说明](03_工具/学习讲义生成器/README.md)：教学模板、公式排版和测试。
@@ -95,3 +142,7 @@
 原版说明保留在 [README.upstream.md](README.upstream.md)，其中的安装包
 链接属于上游版本。来源与修改说明见 [NOTICE](NOTICE.md)，授权见
 [MIT License](LICENSE) 和 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
+
+如果这个工具帮到了你，欢迎点个 Star；遇到问题，可以在
+[Issues](https://github.com/evanielyforquilhinha-hub/course2md-learning/issues)
+告诉我们你在哪一步卡住了。提交截图和日志前，请遮住账号、密钥和私人课程内容。

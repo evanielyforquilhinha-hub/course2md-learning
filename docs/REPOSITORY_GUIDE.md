@@ -3,6 +3,7 @@
 ## 入口
 
 - [项目介绍](../readme.md)：功能、源码获取方式、许可。
+- [下载与配置](INSTALL.md)：AI 协助、手动下载、PowerShell 与 Git 获取方式。
 - [开发与测试](DEVELOPMENT.md)：环境准备、Windows 启动示例、检查命令。
 - [原生桌面开发](../desktop/README.md)：跨平台桌面依赖与资源。
 - [讲义工具](../03_工具/学习讲义生成器/README.md)：教学模板与数学排版。

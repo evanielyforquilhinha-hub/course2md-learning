@@ -1,6 +1,6 @@
 # 开发、运行与测试
 
-[返回项目首页](../readme.md) · [仓库结构与资料边界](REPOSITORY_GUIDE.md)
+[返回项目首页](../readme.md) · [先下载源码](INSTALL.md) · [仓库结构与资料边界](REPOSITORY_GUIDE.md)
 
 ## 构建
 
